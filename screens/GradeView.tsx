@@ -17,6 +17,7 @@ export const GradeView: React.FC = () => {
   const [exams, setExams] = useState<any[]>([]);
   const [userSubmissions, setUserSubmissions] = useState<string[]>([]);
   const [publishedLessonIds, setPublishedLessonIds] = useState<string[]>([]);
+  const [lessonTitleOverrides, setLessonTitleOverrides] = useState<Record<string, string>>({});
   const [loadingExams, setLoadingExams] = useState(true);
   
   const subjectKey = searchParams.get('subject') as Subject || 'filosofia';
@@ -74,10 +75,25 @@ export const GradeView: React.FC = () => {
       // IMPORTANTE: a tabela `activities` só tem `school_classes` (jsonb).
       // Pedir `school_class` (singular) faz o PostgREST devolver 400 e
       // o aluno acaba sem ver NENHUMA atividade. Selecionamos só o que existe.
-      const [actsRes, qsRes] = await Promise.all([
+      // Coleta todos os lesson_ids desta série/matéria para buscar overrides
+      const gradeData = curriculumData.find(g => g.id === Number(id));
+      const allLessonIds = gradeData
+        ? gradeData.bimesters.flatMap(b => b.lessons.filter(l => l.subject === subjectKey).map(l => l.id))
+        : [];
+
+      const [actsRes, qsRes, overridesRes] = await Promise.all([
         supabase.from('activities').select('lesson_id,school_classes'),
         supabase.from('questions').select('lesson_id').eq('subject', subjectKey),
+        allLessonIds.length > 0
+          ? supabase.from('lesson_overrides').select('id, data').in('id', allLessonIds)
+          : Promise.resolve({ data: [], error: null }),
       ]);
+
+      const overrideMap: Record<string, string> = {};
+      ((overridesRes as any).data || []).forEach((o: any) => {
+        if (o.data?.title) overrideMap[o.id] = o.data.title;
+      });
+      setLessonTitleOverrides(overrideMap);
 
       const lessonIdsWithQuestions = new Set<string>();
       (qsRes.data || []).forEach((row: any) => {
@@ -249,7 +265,7 @@ export const GradeView: React.FC = () => {
                                </div>
                                <div className="flex-1">
                                   <span className={`font-bold text-sm block transition-colors ${isLessonDone ? 'text-slate-400' : 'text-slate-700 dark:text-slate-200 group-hover:text-vibe-pink'}`}>
-                                    {lesson.title}
+                                    {lessonTitleOverrides[lesson.id] || lesson.title}
                                   </span>
                                   {isLessonDone && <span className="text-[9px] font-black text-vibe-lime uppercase tracking-widest">✓ Atividade entregue</span>}
                                </div>
