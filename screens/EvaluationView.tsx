@@ -186,9 +186,16 @@ export const EvaluationView: React.FC = () => {
     if (isFinished || isAnnulled || !exam || !student) return;
     setIsAnnulled(true);
     setIsFinished(true);
+
+    const nowIso = new Date().toISOString();
+    const examTitle = exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`;
+    const totalViolations = tabSwitches + pasteAttempts + programmaticInputs;
+
+    // Trava local imediata — evita race condition entre insert async e navegação
+    try { localStorage.setItem(`annulled_${student.id}_${examId}`, '1'); } catch(_e) {}
+
+    // Grava no banco
     try {
-      const nowIso = new Date().toISOString();
-      const examTitle = exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`;
       await supabase.from('submissions').insert({
         student_id: student.id,
         student_name: student.name.trim(),
@@ -200,7 +207,7 @@ export const EvaluationView: React.FC = () => {
         score: 0,
         content: [],
         ai_feedback: {
-          generalComment: `Prova ANULADA por excesso de infrações (${tabSwitches + pasteAttempts + programmaticInputs}/10). Saídas de tela: ${tabSwitches}. Tentativas de colar: ${pasteAttempts}. Inserções automáticas: ${programmaticInputs}.`,
+          generalComment: `Prova ANULADA por excesso de infrações (${totalViolations}/10). Saídas de tela: ${tabSwitches}. Tentativas de colar: ${pasteAttempts}. Inserções automáticas: ${programmaticInputs}.`,
           corrections: [],
           integrity: getIntegrityData(),
           annulled: true,
@@ -213,11 +220,53 @@ export const EvaluationView: React.FC = () => {
     } catch (e) {
       console.error('Erro ao registrar prova anulada:', e);
     }
+
+    // Notifica o professor via sistema de mensagens
+    try {
+      const { data: admins } = await supabase
+        .from('students')
+        .select('id, email')
+        .eq('role', 'admin');
+
+      // Prefere o professor da disciplina; fallback para super admin
+      const teacher = (admins || []).find((a: any) =>
+        a.email?.toLowerCase().startsWith((exam.subject || '').toLowerCase())
+      ) || (admins || []).find((a: any) =>
+        a.email === 'divinoviana@gmail.com'
+      ) || (admins || [])[0];
+
+      if (teacher) {
+        await supabase.from('messages').insert({
+          sender_id: student.id,
+          sender_name: student.name.trim(),
+          receiver_id: teacher.id,
+          school_class: student.school_class.trim(),
+          grade: student.grade,
+          subject: exam.subject,
+          is_from_teacher: false,
+          content: `🚫 PROVA ANULADA AUTOMATICAMENTE\n\nAluno: ${student.name}\nTurma: ${student.school_class} • ${student.grade}ª Série\nAvaliação: "${examTitle}"\n\nInfrações registradas (${totalViolations}/10):\n• Saídas de tela: ${tabSwitches}\n• Tentativas de colar: ${pasteAttempts}\n• Inserções automáticas: ${programmaticInputs}\n\nNota: 0,0 • Status: ANULADA\nO aluno está impedido de refazer esta avaliação.`,
+        });
+      }
+    } catch (msgErr) {
+      console.warn('Falha ao notificar professor (não crítico):', msgErr);
+    }
   };
 
   const checkAttemptAndFetchExam = async () => {
     if (!examId || !student) return;
     setCheckingStatus(true);
+
+    // Verificação local imediata — cobre race condition do insert async
+    try {
+      if (localStorage.getItem(`annulled_${student.id}_${examId}`)) {
+        setIsAnnulled(true);
+        setAlreadyDone(true);
+        setIsFinished(true);
+        setCheckingStatus(false);
+        return;
+      }
+    } catch(_e) {}
+
     try {
       const { data: examData, error: examErr } = await supabase
         .from('bimonthly_exams')
@@ -265,7 +314,11 @@ export const EvaluationView: React.FC = () => {
         setScore(existing[0].score ?? 0);
         setAlreadyDone(true);
         setIsFinished(true);
-        if (existing[0].status === 'annulled') setIsAnnulled(true);
+        if (existing[0].status === 'annulled') {
+          setIsAnnulled(true);
+          // Sincroniza o localStorage para leituras futuras serem instantâneas
+          try { localStorage.setItem(`annulled_${student.id}_${examId}`, '1'); } catch(_e) {}
+        }
       }
     } catch (e: any) {
       console.error('Erro ao validar tentativa:', e);
