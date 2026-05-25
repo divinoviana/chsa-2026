@@ -16,6 +16,7 @@ export const Home: React.FC = () => {
   const { student, isLoading } = useAuth();
   const [exams, setExams] = useState<any[]>([]);
   const [finishedExamTitles, setFinishedExamTitles] = useState<string[]>([]);
+  const [finishedExamIds, setFinishedExamIds] = useState<Set<string>>(new Set());
   const [publishedCountBySubject, setPublishedCountBySubject] = useState<Record<string, number>>({});
   const [attendanceToday, setAttendanceToday] = useState<any | null>(null);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -126,18 +127,25 @@ export const Home: React.FC = () => {
 
       const { data: subsData, error: subsErr } = await supabase
         .from('submissions')
-        .select('lesson_title')
+        .select('lesson_title, lesson_id')
         .eq('student_id', student.id);
       if (subsErr) throw subsErr;
 
       // Considera tanto simulados ("Avaliação Bimestral" / título custom)
       // quanto redações ("Redação: <título>") como já realizados.
+      // Usa tanto o título quanto o lesson_id (uuid) — o ID é mais confiável
+      // pois não depende de correspondência exata de string.
       const subData = (subsData || [])
         .map((s: any) => (s.lesson_title || '').trim())
         .filter((title: string) => title.length > 0);
 
+      const subIds = new Set<string>(
+        (subsData || []).map((s: any) => s.lesson_id).filter(Boolean)
+      );
+
       setExams(examData);
       setFinishedExamTitles(subData);
+      setFinishedExamIds(subIds);
 
       // Conta atividades publicadas por matéria, restritas à série do aluno
       const myGradeNum = Number(student.grade);
@@ -196,6 +204,9 @@ export const Home: React.FC = () => {
   //   - redação:  lesson_title = "Redação: <título>"
   //   - simulado: lesson_title = "Avaliação Bimestral: Xº Bimestre" (ou customizado)
   const pendingExams = exams.filter(e => {
+    // Verifica primeiro por ID (mais confiável — não depende de correspondência de string)
+    if (finishedExamIds.has(e.id)) return false;
+    // Fallback por título (para submissões antigas sem lesson_id preenchido)
     const isEssayItem = e.type === 'essay' || e.questions?.[0]?.type === 'essay';
     const expectedTitle = isEssayItem
       ? `Redação: ${(e.title || 'Redação').trim()}`
