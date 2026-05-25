@@ -243,7 +243,7 @@ export const EvaluationView: React.FC = () => {
       let existing: any[] | null = null;
       const r1 = await supabase
         .from('submissions')
-        .select('score')
+        .select('score, status')
         .eq('student_id', student.id)
         .eq('lesson_id', examId!)
         .limit(1);
@@ -252,7 +252,7 @@ export const EvaluationView: React.FC = () => {
       } else {
         const r2 = await supabase
           .from('submissions')
-          .select('score')
+          .select('score, status')
           .eq('student_id', student.id)
           .eq('subject', examData.subject)
           .eq('lesson_title', expectedTitle)
@@ -265,6 +265,7 @@ export const EvaluationView: React.FC = () => {
         setScore(existing[0].score ?? 0);
         setAlreadyDone(true);
         setIsFinished(true);
+        if (existing[0].status === 'annulled') setIsAnnulled(true);
       }
     } catch (e: any) {
       console.error('Erro ao validar tentativa:', e);
