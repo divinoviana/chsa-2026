@@ -117,26 +117,33 @@ export const Profile: React.FC = () => {
     if (!newPhoto || !student) return;
     setLoading(true);
     try {
-      const profileData: any = {
-        id: student.id,
-        photo_url: newPhoto,
-      };
+      // UPDATE direto — o usuário já está autenticado, a linha existe
+      const { error: updateErr } = await supabase
+        .from('students')
+        .update({ photo_url: newPhoto })
+        .eq('id', student.id);
 
-      // Para admins/professores sem perfil completo de aluno, populamos os requisitos mínimos
-      if (!student.grade || !student.school_class) {
-        profileData.name = student.name || 'Usuário';
-        profileData.email = student.email || '';
-        profileData.role = 'admin';
-        profileData.grade = student.grade || 'N/A';
-        profileData.school_class = student.school_class || 'N/A';
+      if (updateErr) {
+        // Fallback: admin sem row em students — faz upsert com todos os campos obrigatórios
+        if (updateErr.message?.toLowerCase().includes('no rows') || updateErr.code === 'PGRST116') {
+          const { error: upsertErr } = await supabase
+            .from('students')
+            .upsert({
+              id: student.id,
+              photo_url: newPhoto,
+              name: student.name || 'Usuário',
+              email: student.email || '',
+              role: 'admin',
+              grade: student.grade || 'N/A',
+              school_class: student.school_class || 'N/A',
+            }, { onConflict: 'id' });
+          if (upsertErr) throw upsertErr;
+        } else {
+          throw updateErr;
+        }
       }
 
-      const { error } = await supabase
-        .from('students')
-        .upsert(profileData, { onConflict: 'id' });
-      if (error) throw error;
-
-      updateStudentData(profileData);
+      updateStudentData({ photo_url: newPhoto });
       alert("Foto atualizada com sucesso!");
       setNewPhoto(null);
     } catch (err: any) {
