@@ -564,11 +564,15 @@ export interface PedagogicalSummaryInput {
   grades: number[];
   notes: string[];
   studentName?: string;
+  /** Série do aluno (1, 2 ou 3) */
+  studentGrade?: string | number;
   schoolClass: string;
   /** Atividades detalhadas (opcional): permite análise por aula/bimestre */
-  activities?: Array<{ title: string; score: number; bimester?: number; date?: string; subject?: string }>;
+  activities?: Array<{ title: string; score: number; bimester?: number | string; date?: string; subject?: string; teacherFeedback?: string }>;
   /** Anotações de comportamento (opcional) */
   behaviorNotes?: string[];
+  /** Flags de integridade: provas anuladas ou com suspeita de plágio */
+  flags?: { annulled: number; plagiarism: number };
 }
 
 export const generatePedagogicalSummary = async (
@@ -581,42 +585,59 @@ export const generatePedagogicalSummary = async (
     const max = data.grades.length ? Math.max(...data.grades).toFixed(1) : '-';
     const min = data.grades.length ? Math.min(...data.grades).toFixed(1) : '-';
 
-    const prompt = `Atue como Coordenador Pedagógico. Gere um relatório em **Markdown** para o contexto:
-${target}
-Disciplina: ${data.subject}
-Turma de referência: ${data.schoolClass}
+    // Formata atividades de forma legível agrupando por bimestre
+    const actsByBim: Record<string, string[]> = {};
+    (data.activities || []).forEach(a => {
+      const bim = a.bimester ? `${a.bimester}º Bimestre` : 'Bimestre não identificado';
+      if (!actsByBim[bim]) actsByBim[bim] = [];
+      const dateStr = a.date ? new Date(a.date).toLocaleDateString('pt-BR') : '';
+      const fb = a.teacherFeedback ? ` | Feedback: "${a.teacherFeedback}"` : '';
+      actsByBim[bim].push(`  - [${a.subject || data.subject}] ${a.title}: nota ${a.score.toFixed(1)}/10 (${dateStr})${fb}`);
+    });
+    const activitiesFormatted = Object.entries(actsByBim)
+      .map(([bim, lines]) => `${bim}:\n${lines.join('\n')}`)
+      .join('\n\n');
 
-Estatísticas das notas:
-- Quantidade de avaliações: ${data.grades.length}
-- Média: ${avg}
-- Maior nota: ${max}
-- Menor nota: ${min}
-- Notas brutas: ${JSON.stringify(data.grades)}
+    const flagsNote = data.flags && (data.flags.annulled > 0 || data.flags.plagiarism > 0)
+      ? `\n⚠️ Alertas de integridade: ${data.flags.annulled} prova(s) anulada(s) por infrações, ${data.flags.plagiarism} suspeita(s) de plágio.`
+      : '';
 
-Anotações pedagógicas do professor:
-${(data.notes || []).map((n, i) => `${i + 1}. ${n}`).join('\n') || '(nenhuma)'}
+    const prompt = `Atue como Coordenador Pedagógico. Gere um relatório em **Markdown** para:
+${target}${data.studentGrade ? ` | ${data.studentGrade}ª Série` : ''} | Turma: ${data.schoolClass || 'N/A'}
+Disciplina analisada: ${data.subject}${flagsNote}
 
-${data.behaviorNotes && data.behaviorNotes.length ? `Anotações de comportamento:\n${data.behaviorNotes.map((n,i) => `${i+1}. ${n}`).join('\n')}` : ''}
+━━━ DESEMPENHO QUANTITATIVO ━━━
+Avaliações registradas: ${data.grades.length}
+Média geral: ${avg}/10 | Maior: ${max} | Menor: ${min}
 
-${data.activities && data.activities.length ? `Atividades detalhadas:\n${JSON.stringify(data.activities)}` : ''}
+Histórico por atividade:
+${activitiesFormatted || '(sem atividades registradas)'}
 
-Estrutura obrigatória do relatório:
+━━━ ANOTAÇÕES DO PROFESSOR ━━━
+Feedbacks escritos nas submissões:
+${(data.notes || []).map((n, i) => `${i + 1}. ${n}`).join('\n') || '(nenhum)'}
+
+${data.behaviorNotes?.length ? `Anotações de acompanhamento (comportamento, saúde, família, pedagógico):
+${data.behaviorNotes.map((n, i) => `${i + 1}. ${n}`).join('\n')}` : ''}
+
+━━━ ESTRUTURA OBRIGATÓRIA DO RELATÓRIO ━━━
+
 ## 1. Análise de Desempenho
-Interprete as notas: tendência, dispersão, evolução por bimestre, pontos de atenção.
+Interprete as notas: tendência (melhorando/piorando), evolução por bimestre, dispersão entre disciplinas, pontos de atenção. ${data.grades.length === 0 ? 'ATENÇÃO: nenhuma avaliação registrada — aponte isso como dado relevante.' : ''}
 
 ## 2. Síntese Qualitativa
-O que as anotações pedagógicas e (se houver) as observações de comportamento revelam sobre engajamento, dificuldades e potencialidades.
+O que as anotações revelam sobre engajamento, dificuldades, contexto familiar/saúde e potencialidades? Conecte com o desempenho quantitativo.
 
 ## 3. Cruzamento de Indicadores
-Conecte notas, comportamento e observações: há padrão? aluno com queda nas notas e queda de engajamento? boa nota mas comportamento de risco?
+Identifique padrões: queda nas notas + problema comportamental? Bom desempenho em certas disciplinas mas não em outras? Alguma mudança brusca ao longo do ano?${data.flags?.annulled ? ' Considere as provas anuladas como sinal de risco.' : ''}
 
 ## 4. Plano de Intervenção Pedagógica
-3 a 5 ações concretas, mensuráveis e com prazo (curto/médio prazo). Inclua:
-- Estratégias de sala de aula específicas
-- Recursos e mediação familiar quando necessário
-- Indicadores que mostrem se a intervenção está funcionando
+Liste 3 a 5 ações **concretas, mensuráveis e com prazo** (curto/médio prazo):
+- Estratégias específicas para sala de aula
+- Articulações necessárias (família, coordenação, outras disciplinas)
+- Indicadores de acompanhamento (como saber se a intervenção está funcionando)
 
-Tom: profissional, empático, focado em soluções.`;
+Tom: profissional, empático, orientado a soluções. NÃO invente dados que não estejam acima.`;
 
     return callDeepSeek(prompt, {
       model: 'deepseek-chat',

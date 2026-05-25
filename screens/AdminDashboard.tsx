@@ -1401,32 +1401,35 @@ export const AdminDashboard: React.FC = () => {
 
   const handleGenerateFullReport = async () => {
     setIsGeneratingReport(true);
+    setAiReportResult(null);
     try {
       const { generatePedagogicalSummary } = await import('../services/aiService');
 
-      // Resolve nome do aluno selecionado (caso individual)
+      // Resolve o aluno selecionado pelo ID (correção: antes usava s.name como value)
       const targetStudent = reportTarget === 'student'
         ? students.find(s => s.id === selectedReportStudent)
         : null;
 
-      // Submissões relevantes para o relatório
+      // Submissões relevantes
       const relevant = submissions.filter(s => {
-        if (reportTarget === 'student') {
-          return s.student_id === selectedReportStudent
-              || (targetStudent && s.student_name?.toLowerCase().trim() === targetStudent.name?.toLowerCase().trim());
-        }
+        if (reportTarget === 'student') return s.student_id === selectedReportStudent;
         return filterClass === 'all' || s.school_class === filterClass;
       });
 
-      // Buscar anotações (student_notes) + extrair categoria pra enriquecer
-      // o cruzamento da IA. Cada categoria vira um sinal pedagógico distinto.
+      // Buscar anotações (student_notes) com filtro correto
       let behaviorNotes: string[] = [];
       try {
         let qb = supabase.from('student_notes').select('*').order('created_at', { ascending: false });
-        if (reportTarget === 'student' && selectedReportStudent) qb = qb.eq('student_id', selectedReportStudent);
+        if (reportTarget === 'student' && selectedReportStudent) {
+          qb = qb.eq('student_id', selectedReportStudent);
+        } else if (reportTarget === 'class' && filterClass !== 'all') {
+          const classStudentIds = students
+            .filter(s => s.school_class === filterClass)
+            .map(s => s.id);
+          if (classStudentIds.length > 0) qb = qb.in('student_id', classStudentIds);
+        }
         const { data: notes } = await qb;
         behaviorNotes = (notes || []).map((n: any) => {
-          // Tenta extrair categoria da coluna ou do prefixo "[categoria] texto"
           let cat = (n.category || '').toLowerCase();
           let content = n.content || '';
           if (!cat) {
@@ -1435,30 +1438,46 @@ export const AdminDashboard: React.FC = () => {
           }
           const subj = n.subject || n.teacher_subject || 'geral';
           const date = n.created_at ? new Date(n.created_at).toLocaleDateString('pt-BR') : '';
-          return `[${cat || 'geral'} • ${subj} • ${date}] ${content}`;
+          // Para relatório de turma, inclui o nome do aluno na anotação
+          const stuName = reportTarget === 'class'
+            ? (students.find(s => s.id === n.student_id)?.name || 'Aluno')
+            : '';
+          return `[${cat || 'geral'} • ${subj} • ${date}${stuName ? ' • ' + stuName : ''}] ${content}`;
         });
       } catch (e) {
         console.warn('Falha ao buscar student_notes:', e);
       }
 
-      const activities = relevant.map((s: any) => ({
-        title: s.lesson_title,
-        score: Number(s.score) || 0,
-        bimester: (s.lesson_id ? lessonToBimesterMap[s.lesson_id] : null) || lessonToBimesterMap[s.lesson_title] || undefined,
-        date: s.submitted_at || s.submission_date,
-        subject: s.subject,
-      }));
+      // Flags de integridade
+      const annulledCount = relevant.filter(s => s.status === 'annulled').length;
+      const plagiarismCount = relevant.filter(s => s.status === 'plagiarism_suspected').length;
+
+      // Atividades (exclui anuladas do cálculo de média)
+      const activities = relevant
+        .filter(s => s.status !== 'annulled')
+        .map((s: any) => ({
+          title: s.lesson_title,
+          score: Number(s.score) || 0,
+          bimester: (s.lesson_id ? lessonToBimesterMap[s.lesson_id] : null) || lessonToBimesterMap[s.lesson_title] || undefined,
+          date: s.submitted_at || s.submission_date,
+          subject: s.subject,
+          teacherFeedback: s.teacher_feedback || '',
+        }));
 
       const result = await generatePedagogicalSummary(
         reportTarget === 'student' ? 'INDIVIDUAL' : 'TURMA',
         {
           subject: teacherSubject || 'Geral',
-          grades: relevant.map(s => Number(s.score) || 0),
-          notes: relevant.map(s => s.teacher_feedback || '').filter(Boolean),
+          grades: activities.map(a => a.score),
+          notes: activities.map(a => a.teacherFeedback).filter(Boolean),
           studentName: targetStudent?.name,
-          schoolClass: filterClass,
+          studentGrade: targetStudent?.grade,
+          schoolClass: reportTarget === 'student'
+            ? (targetStudent?.school_class || filterClass)
+            : filterClass,
           activities,
           behaviorNotes,
+          flags: { annulled: annulledCount, plagiarism: plagiarismCount },
         }
       );
       setAiReportResult(result);
@@ -3327,18 +3346,18 @@ export const AdminDashboard: React.FC = () => {
                             <input 
                               type="radio" 
                               name="report_type" 
-                              checked={reportTarget === 'student'} 
-                              onChange={() => setReportTarget('student')}
+                              checked={reportTarget === 'student'}
+                              onChange={() => { setReportTarget('student'); setAiReportResult(null); }}
                               className="accent-tocantins-blue"
                             />
                             <span className="font-bold text-slate-700 dark:text-slate-200 text-xs uppercase tracking-widest">Por Estudante</span>
                          </label>
                          <label className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 rounded-2xl cursor-pointer shadow-sm">
-                            <input 
-                              type="radio" 
-                              name="report_type" 
-                              checked={reportTarget === 'class'} 
-                              onChange={() => setReportTarget('class')}
+                            <input
+                              type="radio"
+                              name="report_type"
+                              checked={reportTarget === 'class'}
+                              onChange={() => { setReportTarget('class'); setAiReportResult(null); }}
                               className="accent-tocantins-blue"
                             />
                             <span className="font-bold text-slate-700 dark:text-slate-200 text-xs uppercase tracking-widest">Por Turma</span>
@@ -3348,13 +3367,13 @@ export const AdminDashboard: React.FC = () => {
                       <div className="space-y-1">
                          <label className="text-[10px] font-black text-slate-400 uppercase ml-4 tracking-widest">Alvo da Análise</label>
                          {reportTarget === 'student' ? (
-                           <select 
+                           <select
                              value={selectedReportStudent}
-                             onChange={e => setSelectedReportStudent(e.target.value)}
+                             onChange={e => { setSelectedReportStudent(e.target.value); setAiReportResult(null); }}
                              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-6 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
                            >
                               <option value="">Selecione um Estudante...</option>
-                              {students.map(s => <option key={s.id} value={s.name}>{s.name} ({s.school_class})</option>)}
+                              {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.school_class})</option>)}
                            </select>
                          ) : (
                            <select 
