@@ -8,9 +8,10 @@ interface Props {
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onInput?: (e: React.FormEvent<HTMLTextAreaElement>) => void;
   onPasteBlocked?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  textareaRef?: (el: HTMLTextAreaElement | null) => void;
 }
 
-export const ActivityInput: React.FC<Props> = ({ questionId, questionText, value, onChange, onKeyDown, onInput, onPasteBlocked }) => {
+export const ActivityInput: React.FC<Props> = ({ questionId, questionText, value, onChange, onKeyDown, onInput, onPasteBlocked, textareaRef }) => {
   const [warning, setWarning] = useState<string | null>(null);
 
   // Limpa o aviso automaticamente após 3 segundos
@@ -58,6 +59,7 @@ export const ActivityInput: React.FC<Props> = ({ questionId, questionText, value
               ? 'border-red-400 focus:border-red-400 focus:ring-red-200 bg-red-50 text-red-900' 
               : 'border-slate-300 focus:border-tocantins-blue focus:ring-tocantins-blue bg-white text-slate-700'
           }`}
+          ref={textareaRef}
           rows={4}
           placeholder="Digite sua resposta aqui..."
           value={value}

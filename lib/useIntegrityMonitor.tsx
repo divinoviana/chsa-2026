@@ -8,16 +8,42 @@ export interface IntegrityData {
   suspicion_level: 'clean' | 'low' | 'medium' | 'high';
 }
 
-// Globals injetados por Violentmonkey, Tampermonkey, Greasemonkey e similares
+// Globals expostos quando o script roda com @grant (Violentmonkey, Tampermonkey, Greasemonkey)
 const EXTENSION_GLOBALS = [
   'GM', 'GM_info', 'GM_getValue', 'GM_setValue', 'GM_deleteValue',
   'GM_listValues', 'GM_xmlhttpRequest', 'GM_openInTab', 'GM_notification',
   'GM_setClipboard', 'GM_getResourceText', 'GM_addStyle',
   'unsafeWindow', 'cloneInto', 'exportFunction',
+  // Tampermonkey
+  'TM_info', '__ViolentMonkeyNativeRequest__',
+  // Indicadores de userscript manager ativo no contexto da página
+  '_TM_', '_GM_', 'tampermonkey', 'violentmonkey',
 ];
 
+// Verifica se algum global de extensão vazou para window (scripts com @grant)
+function detectExtensionGlobals(): boolean {
+  return EXTENSION_GLOBALS.some(g => {
+    try { return g in window; } catch { return false; }
+  });
+}
+
+// Verifica se APIs nativas foram substituídas por wrappers de extensão.
+// Scripts com @grant none rodam no contexto da página e podem envolver funções.
+function detectWrappedAPIs(): boolean {
+  try {
+    // fetch envolvido: toString() de função nativa contém "[native code]"
+    const fetchStr = window.fetch?.toString() ?? '';
+    if (fetchStr && !fetchStr.includes('[native code]')) return true;
+
+    // XMLHttpRequest.open envolvido (usado para capturar/enviar respostas)
+    const xhrStr = XMLHttpRequest.prototype.open?.toString() ?? '';
+    if (xhrStr && !xhrStr.includes('[native code]')) return true;
+  } catch { /* silencioso */ }
+  return false;
+}
+
 function detectExtension(): boolean {
-  return EXTENSION_GLOBALS.some(g => g in window);
+  return detectExtensionGlobals() || detectWrappedAPIs();
 }
 
 export function useIntegrityMonitor(active: boolean) {
@@ -26,15 +52,17 @@ export function useIntegrityMonitor(active: boolean) {
   const [extensionDetected, setExtensionDetected] = useState(false);
   const [programmaticInputs, setProgrammaticInputs] = useState(0);
 
-  // Timestamp da última tecla pressionada em qualquer textarea monitorada
   const lastKeystrokeRef = useRef<number>(0);
+  // Conta teclas reais para calcular velocidade de digitação
+  const keystrokeCountRef = useRef<number>(0);
+  const windowStartRef = useRef<number>(Date.now());
 
-  // Detecta extensões no mount e periodicamente (algumas carregam de forma lazy)
+  // Detecta extensões periodicamente (lazy-load e @grant none não aparecem de imediato)
   useEffect(() => {
     if (!active) return;
     const check = () => { if (detectExtension()) setExtensionDetected(true); };
     check();
-    const id = setInterval(check, 1500);
+    const id = setInterval(check, 1000);
     return () => clearInterval(id);
   }, [active]);
 
@@ -46,38 +74,98 @@ export function useIntegrityMonitor(active: boolean) {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [active]);
 
-  // Chama nas textareas monitoradas para registrar digitação real
-  const handleKeyDown = useCallback(() => {
-    lastKeystrokeRef.current = Date.now();
+  // Registra digitação real — só conta eventos confiáveis (isTrusted = browser)
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.nativeEvent as KeyboardEvent).isTrusted) {
+      lastKeystrokeRef.current = Date.now();
+      keystrokeCountRef.current += 1;
+    }
   }, []);
 
-  // Bloqueia paste e conta a tentativa
+  // Bloqueia paste e conta a tentativa (paste não-confiável também conta)
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
     setPasteAttempts(n => n + 1);
   }, []);
 
-  // Detecta injeção programática: texto longo apareceu sem digitação recente
+  // Detecta injeção programática via três sinais:
+  //  1. isTrusted = false → evento disparado por script (execCommand, dispatchEvent)
+  //  2. Muitos chars de uma vez sem tecla recente (bloco colado via script)
+  //  3. Velocidade impossível: >12 chars/s num intervalo de 3 s sem teclas correspondentes
   const handleInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>) => {
     const ev = e.nativeEvent as InputEvent;
-    const msSinceLastKey = Date.now() - lastKeystrokeRef.current;
-    const charsAdded = ev.data?.length ?? 0;
-    // > 40 chars inseridos de uma vez sem tecla recente (< 300 ms) = provável injeção
-    if (charsAdded > 40 && msSinceLastKey > 300) {
+
+    // Sinal 1: evento não confiável — definitivamente gerado por script
+    if (!ev.isTrusted) {
       setProgrammaticInputs(n => n + 1);
+      return;
+    }
+
+    const now = Date.now();
+    const msSinceLastKey = now - lastKeystrokeRef.current;
+    const charsAdded = ev.data?.length ?? 0;
+
+    // Sinal 2: bloco grande sem tecla recente
+    if (charsAdded > 30 && msSinceLastKey > 200) {
+      setProgrammaticInputs(n => n + 1);
+      return;
+    }
+
+    // Sinal 3: janela deslizante de 3 s — velocidade de digitação impossível para humanos
+    const windowMs = now - windowStartRef.current;
+    if (windowMs >= 3000) {
+      const cps = keystrokeCountRef.current / (windowMs / 1000);
+      // >12 chars/s de forma sustentada é improvável para humano comum
+      if (cps > 12 && keystrokeCountRef.current < charsAdded * 0.5) {
+        setProgrammaticInputs(n => n + 1);
+      }
+      // Reinicia janela
+      windowStartRef.current = now;
+      keystrokeCountRef.current = 0;
     }
   }, []);
+
+  // Ref callback: instala proxy no setter `value` do textarea para capturar
+  // atribuições diretas (script faz: textarea.value = "resposta")
+  // Isso pega scripts que NÃO disparam eventos (bypass completo de eventos).
+  const attachTextareaMonitor = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el || !active) return;
+    // Evita instalar duas vezes no mesmo elemento
+    if ((el as any).__integrityMonitored) return;
+    (el as any).__integrityMonitored = true;
+
+    const proto = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    if (!proto?.get || !proto?.set) return;
+    const originalSet = proto.set;
+    const originalGet = proto.get;
+    const lastKeyRef = lastKeystrokeRef; // captura ref no closure
+
+    Object.defineProperty(el, 'value', {
+      get() { return originalGet.call(this); },
+      set(newVal: string) {
+        const prev = originalGet.call(this) as string;
+        const added = (newVal?.length ?? 0) - (prev?.length ?? 0);
+        // Mais de 5 chars adicionados sem tecla nos últimos 400 ms = script
+        if (added > 5 && Date.now() - lastKeyRef.current > 400) {
+          setProgrammaticInputs(n => n + 1);
+        }
+        originalSet.call(this, newVal);
+      },
+      configurable: true,
+    });
+  }, [active]);
 
   const suspicionLevel = (): 'clean' | 'low' | 'medium' | 'high' => {
     let score = 0;
     if (extensionDetected) score += 5;
-    if (programmaticInputs >= 2) score += 4;
+    if (programmaticInputs >= 3) score += 5;
+    else if (programmaticInputs === 2) score += 4;
     else if (programmaticInputs === 1) score += 3;
     if (pasteAttempts >= 3) score += 2;
     else if (pasteAttempts > 0) score += 1;
     if (tabSwitches >= 4) score += 2;
     else if (tabSwitches > 0) score += 1;
-    if (score >= 6) return 'high';
+    if (score >= 7) return 'high';
     if (score >= 4) return 'medium';
     if (score >= 1) return 'low';
     return 'clean';
@@ -100,6 +188,7 @@ export function useIntegrityMonitor(active: boolean) {
     handleKeyDown,
     handlePaste,
     handleInput,
+    attachTextareaMonitor,
     getIntegrityData,
   };
 }

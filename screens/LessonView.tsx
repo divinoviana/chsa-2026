@@ -29,7 +29,7 @@ export const LessonView: React.FC = () => {
   const [aiData, setAiData] = useState<AIResponse | null>(null);
 
   const {
-    suspicionLevel, handleKeyDown, handlePaste, handleInput, getIntegrityData,
+    suspicionLevel, handleKeyDown, handlePaste, handleInput, attachTextareaMonitor, getIntegrityData,
   } = useIntegrityMonitor(!!student && !!lessonId);
 
   useEffect(() => {
@@ -389,6 +389,7 @@ export const LessonView: React.FC = () => {
                             onKeyDown={handleKeyDown}
                             onInput={handleInput}
                             onPasteBlocked={handlePaste}
+                            textareaRef={attachTextareaMonitor}
                           />
                       </div>
                     ))}

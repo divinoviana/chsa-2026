@@ -23,7 +23,7 @@ export const EvaluationView: React.FC = () => {
   const [checkingStatus, setCheckingStatus] = useState(true);
   const {
     tabSwitches, pasteAttempts, extensionDetected, programmaticInputs,
-    suspicionLevel, handleKeyDown, handlePaste, handleInput, getIntegrityData,
+    suspicionLevel, handleKeyDown, handlePaste, handleInput, attachTextareaMonitor, getIntegrityData,
   } = useIntegrityMonitor(!isFinished && !checkingStatus && !!exam);
   // Resultado da correção IA da redação (5 competências ENEM)
   const [essayCorrection, setEssayCorrection] = useState<any | null>(null);
@@ -431,6 +431,7 @@ export const EvaluationView: React.FC = () => {
 
                 {/* Textarea com bloqueio de paste e tracking */}
                 <textarea
+                  ref={attachTextareaMonitor}
                   value={String(answers[1] || '')}
                   onChange={e => setAnswers(prev => ({ ...prev, 1: e.target.value }))}
                   onKeyDown={handleKeyDown}
@@ -532,6 +533,7 @@ export const EvaluationView: React.FC = () => {
                        ) : (
                          <div>
                            <textarea
+                             ref={attachTextareaMonitor}
                              value={String(answers[q.id] || '')}
                              onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
                              onKeyDown={handleKeyDown}
