@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -8,6 +8,44 @@ import { Subject } from '../types';
 import { ArrowLeft, BrainCircuit, CheckCircle2, Clock, Send, Loader2, Award, Info, Lock, AlertTriangle, Pencil, ShieldAlert } from 'lucide-react';
 import { VisualActivityRenderer } from '../components/VisualActivityRenderer';
 import { useIntegrityMonitor, SuspicionBadge } from '../lib/useIntegrityMonitor';
+
+// ── Seeded shuffle utilities ──────────────────────────────────────────────────
+function seededRandom(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) { h = Math.imul(31, h) + seed.charCodeAt(i) | 0; }
+  let s = Math.abs(h) || 1;
+  return () => { s = Math.imul(s ^ (s >>> 15), s | 1); s ^= s + Math.imul(s ^ (s >>> 7), s | 61); return ((s ^ (s >>> 14)) >>> 0) / 0x100000000; };
+}
+function seededShuffle<T>(arr: T[], seed: string): T[] {
+  const a = [...arr]; const r = seededRandom(seed);
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+function shuffleExamForStudent(examData: any, studentId: string): any {
+  if (!examData?.questions || !studentId) return examData;
+  const seed = studentId;
+  const shuffledQs = seededShuffle([...examData.questions], seed);
+  const processedQs = shuffledQs.map((q: any, qi: number) => {
+    if (q.type === 'discursive' || !q.options || !q.correctOption) return q;
+    const letters = ['a','b','c','d','e'].filter((l: string) => q.options[l]);
+    const shuffledLetters = seededShuffle(letters, seed + String(q.id) + qi);
+    const newOptions: any = {};
+    let newCorrectOption = q.correctOption;
+    shuffledLetters.forEach((oldLetter: string, idx: number) => {
+      const newLetter = letters[idx];
+      newOptions[newLetter] = q.options[oldLetter];
+      if (oldLetter === q.correctOption) newCorrectOption = newLetter;
+    });
+    return { ...q, options: newOptions, correctOption: newCorrectOption };
+  });
+  return { ...examData, questions: processedQs };
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const s = (seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
 
 export const EvaluationView: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
@@ -25,6 +63,12 @@ export const EvaluationView: React.FC = () => {
     tabSwitches, pasteAttempts, extensionDetected, programmaticInputs,
     suspicionLevel, handleKeyDown, handlePaste, handleInput, attachTextareaMonitor, getIntegrityData,
   } = useIntegrityMonitor(!isFinished && !checkingStatus && !!exam);
+  const [shuffledExam, setShuffledExam] = useState<any>(null);
+  const [timeLeft, setTimeLeft] = useState(30 * 60);
+  const [isAnnulled, setIsAnnulled] = useState(false);
+  const skipConfirmRef = useRef(false);
+  const autoSubmittedRef = useRef(false);
+
   // Resultado da correção IA da redação (5 competências ENEM)
   const [essayCorrection, setEssayCorrection] = useState<any | null>(null);
   // Loading específico para mostrar "Corrigindo redação…" durante a chamada IA
@@ -38,6 +82,74 @@ export const EvaluationView: React.FC = () => {
       checkAttemptAndFetchExam();
     }
   }, [examId, student, isAuthLoading]);
+
+  // Set shuffled exam after exam loads (non-essay only)
+  useEffect(() => {
+    if (!exam || !student?.id) return;
+    const examIsEssay = exam?.type === 'essay' || (exam?.questions?.[0]?.type === 'essay');
+    if (!examIsEssay) setShuffledExam(shuffleExamForStudent(exam, student.id));
+  }, [exam?.id, student?.id]);
+
+  // Countdown timer (simulado only, 30 min)
+  useEffect(() => {
+    if (isFinished || checkingStatus || !exam || isAnnulled) return;
+    const examIsEssay = exam?.type === 'essay' || (exam?.questions?.[0]?.type === 'essay');
+    if (examIsEssay) return;
+    if (timeLeft <= 0) return;
+    const id = setTimeout(() => setTimeLeft(t => Math.max(0, t - 1)), 1000);
+    return () => clearTimeout(id);
+  }, [timeLeft, isFinished, checkingStatus, exam?.id, isAnnulled]);
+
+  // Auto-submit when timer hits 0
+  useEffect(() => {
+    const examIsEssay = exam?.type === 'essay' || (exam?.questions?.[0]?.type === 'essay');
+    if (timeLeft === 0 && !isFinished && !isAnnulled && !!exam && !examIsEssay && !autoSubmittedRef.current) {
+      autoSubmittedRef.current = true;
+      skipConfirmRef.current = true;
+      handleSubmit();
+    }
+  }, [timeLeft]);
+
+  // Violation annulment (simulado only)
+  useEffect(() => {
+    const examIsEssay = exam?.type === 'essay' || (exam?.questions?.[0]?.type === 'essay');
+    if (isFinished || isAnnulled || !exam || examIsEssay) return;
+    const totalViolations = tabSwitches + pasteAttempts + programmaticInputs;
+    if (totalViolations >= 10) handleAnnulExam();
+  }, [tabSwitches, pasteAttempts, programmaticInputs]);
+
+  const handleAnnulExam = async () => {
+    if (isFinished || isAnnulled || !exam || !student) return;
+    setIsAnnulled(true);
+    setIsFinished(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const examTitle = exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`;
+      await supabase.from('submissions').insert({
+        student_id: student.id,
+        student_name: student.name.trim(),
+        school_class: student.school_class.trim(),
+        grade: student.grade,
+        lesson_id: examId,
+        lesson_title: examTitle.trim(),
+        subject: exam.subject,
+        score: 0,
+        content: [],
+        ai_feedback: {
+          generalComment: `Prova ANULADA por excesso de infrações (${tabSwitches + pasteAttempts + programmaticInputs}/10). Saídas de tela: ${tabSwitches}. Tentativas de colar: ${pasteAttempts}. Inserções automáticas: ${programmaticInputs}.`,
+          corrections: [],
+          integrity: getIntegrityData(),
+          annulled: true,
+        },
+        teacher_feedback: null,
+        submitted_at: nowIso,
+        submission_date: nowIso,
+        status: 'annulled',
+      });
+    } catch (e) {
+      console.error('Erro ao registrar prova anulada:', e);
+    }
+  };
 
   const checkAttemptAndFetchExam = async () => {
     if (!examId || !student) return;
@@ -186,8 +298,9 @@ export const EvaluationView: React.FC = () => {
     if (isEssay) return handleSubmitEssay();
 
     // Conta quantas questões devem ter resposta (todas as do exam)
-    const totalQuestions = exam.questions.length;
-    const answeredCount = exam.questions.filter((q: any) => {
+    const activeQs = (shuffledExam || exam).questions;
+    const totalQuestions = activeQs.length;
+    const answeredCount = activeQs.filter((q: any) => {
       const v = answers[q.id];
       return v !== undefined && v !== null && String(v).trim() !== '';
     }).length;
@@ -197,13 +310,15 @@ export const EvaluationView: React.FC = () => {
       return;
     }
 
-    if (!confirm("Tem certeza que deseja enviar? Você só tem UMA tentativa para esta avaliação.")) return;
+    const shouldConfirm = !skipConfirmRef.current;
+    skipConfirmRef.current = false;
+    if (shouldConfirm && !confirm("Tem certeza que deseja enviar? Você só tem UMA tentativa para esta avaliação.")) return;
 
     setIsSubmitting(true);
 
     // 1) Corrige OBJETIVAS localmente (precisão 100%)
-    const objectiveQs = exam.questions.filter((q: any) => q.type !== 'discursive' && q.options && q.correctOption);
-    const discursiveQs = exam.questions.filter((q: any) => q.type === 'discursive' || !q.options || !q.correctOption);
+    const objectiveQs = activeQs.filter((q: any) => q.type !== 'discursive' && q.options && q.correctOption);
+    const discursiveQs = activeQs.filter((q: any) => q.type === 'discursive' || !q.options || !q.correctOption);
 
     let objectiveCorrect = 0;
     const correctionDetails: any[] = [];
@@ -461,31 +576,54 @@ export const EvaluationView: React.FC = () => {
           </div>
         ) : !isFinished ? (
            <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl shadow-xl flex items-center justify-between border-2 border-indigo-100 dark:border-indigo-900 transition-colors duration-300">
-                 <div className="flex items-center gap-3">
-                    <Info className="text-indigo-500 dark:text-indigo-400" size={20}/>
-                    <p className="text-xs font-bold text-slate-600 dark:text-slate-400">Atenção: Você só pode realizar esta prova uma única vez. <strong>Não saia desta tela</strong> — saídas ficam registradas para o professor.</p>
-                 </div>
-                 <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-800 px-4 py-2 rounded-2xl font-black text-slate-400 dark:text-slate-500 text-xs">
-                    <Clock size={14}/> QUESTÕES: {Object.keys(answers).length}/{exam.questions.length}
-                 </div>
+              <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl shadow-xl border-2 border-indigo-100 dark:border-indigo-900 transition-colors duration-300">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <Info className="text-indigo-500 dark:text-indigo-400 shrink-0" size={20}/>
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-400">Você tem <strong>uma tentativa</strong>. <strong>Não saia desta tela</strong> — saídas e colagens ficam registradas e podem anular sua prova.</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 px-3 py-2 rounded-2xl font-black text-slate-400 dark:text-slate-500 text-xs">
+                      <Clock size={13}/> {Object.keys(answers).length}/{(shuffledExam || exam).questions.length}
+                    </div>
+                    <div className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl font-black text-sm tabular-nums ${timeLeft <= 60 ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 animate-pulse' : timeLeft <= 300 ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400' : timeLeft <= 600 ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'}`}>
+                      ⏱ {formatTime(timeLeft)}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {(tabSwitches > 0 || pasteAttempts > 0 || extensionDetected || programmaticInputs > 0) && (
-                <div className="flex flex-wrap items-center gap-2 -mt-4 px-2">
-                  {tabSwitches > 0 && (
-                    <span className="inline-flex items-center gap-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
-                      <AlertTriangle size={12}/> {tabSwitches} saída{tabSwitches > 1 ? 's' : ''} de tela registrada{tabSwitches > 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {pasteAttempts > 0 && (
-                    <span className="inline-flex items-center gap-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
-                      🚫 {pasteAttempts} tentativa{pasteAttempts > 1 ? 's' : ''} de colar
-                    </span>
-                  )}
-                  <SuspicionBadge level={suspicionLevel} />
-                </div>
-              )}
+              {(() => {
+                const totalViolations = tabSwitches + pasteAttempts + programmaticInputs;
+                const remaining = 10 - totalViolations;
+                if (totalViolations >= 8) return (
+                  <div className="bg-red-50 dark:bg-red-950/40 border-2 border-red-500 rounded-3xl p-5 -mt-4 animate-pulse">
+                    <p className="font-black text-red-700 dark:text-red-300 text-sm">🔴 AVISO FINAL: {totalViolations}/10 infrações. Mais {remaining} infração{remaining !== 1 ? 'ões' : ''} e sua prova será <strong>ANULADA com nota ZERO</strong>.</p>
+                  </div>
+                );
+                if (totalViolations >= 5) return (
+                  <div className="bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 rounded-3xl p-5 -mt-4">
+                    <p className="font-black text-amber-700 dark:text-amber-300 text-sm">⚠️ ATENÇÃO: {totalViolations}/10 infrações detectadas. Com 10 infrações a prova é anulada com nota ZERO. Restam {remaining}.</p>
+                  </div>
+                );
+                if (totalViolations > 0) return (
+                  <div className="flex flex-wrap items-center gap-2 -mt-4 px-2">
+                    {tabSwitches > 0 && (
+                      <span className="inline-flex items-center gap-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
+                        <AlertTriangle size={12}/> {tabSwitches} saída{tabSwitches > 1 ? 's' : ''} de tela
+                      </span>
+                    )}
+                    {pasteAttempts > 0 && (
+                      <span className="inline-flex items-center gap-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
+                        🚫 {pasteAttempts} tentativa{pasteAttempts > 1 ? 's' : ''} de colar
+                      </span>
+                    )}
+                    <SuspicionBadge level={suspicionLevel} />
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">({totalViolations}/10 infrações)</span>
+                  </div>
+                );
+                return null;
+              })()}
 
               {exam.visualContent && (
                  <div className="bg-white dark:bg-slate-900 rounded-[40px] shadow-xl border border-slate-100 dark:border-slate-800 p-8 mb-8 transition-colors duration-300">
@@ -493,7 +631,7 @@ export const EvaluationView: React.FC = () => {
                  </div>
               )}
 
-              {exam.questions && Array.isArray(exam.questions) && exam.questions.map((q: any, idx: number) => {
+              {(shuffledExam || exam).questions && Array.isArray((shuffledExam || exam).questions) && (shuffledExam || exam).questions.map((q: any, idx: number) => {
                 const isDiscursive = q.type === 'discursive' || !q.options || !q.correctOption;
                 return (
                  <div key={idx} className="bg-white dark:bg-slate-900 rounded-[40px] shadow-xl border border-slate-100 dark:border-slate-800 overflow-hidden transition-colors duration-300">
@@ -564,6 +702,28 @@ export const EvaluationView: React.FC = () => {
                  🚀 Finalizar e Bloquear Tentativa
               </button>
            </div>
+        ) : isAnnulled ? (
+          <div className="bg-red-600 p-1 rounded-[44px] shadow-2xl animate-in zoom-in duration-500">
+            <div className="bg-white dark:bg-slate-900 rounded-[40px] p-10 text-center">
+              <div className="w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 bg-red-600 text-white shadow-2xl">
+                <ShieldAlert size={44}/>
+              </div>
+              <h2 className="text-4xl font-black tracking-tighter mb-3 text-red-600 dark:text-red-400">🚫 Prova Anulada</h2>
+              <p className="text-slate-500 dark:text-slate-400 font-bold text-sm mb-5 max-w-sm mx-auto leading-relaxed">
+                Sua prova foi <strong>ANULADA</strong> por excesso de infrações (tentativas de cola + saídas de tela). Nota registrada: <strong>0,0</strong>.
+              </p>
+              <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-2xl p-4 mb-6 text-left max-w-xs mx-auto">
+                <p className="text-[10px] font-black text-red-700 dark:text-red-300 uppercase tracking-widest mb-2">Infrações registradas</p>
+                <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+                  <li>• Saídas de tela: <strong>{tabSwitches}</strong></li>
+                  <li>• Tentativas de colar: <strong>{pasteAttempts}</strong></li>
+                  {programmaticInputs > 0 && <li>• Inserções automáticas: <strong>{programmaticInputs}</strong></li>}
+                  <li className="pt-1 font-black text-red-600 dark:text-red-400">Total: {tabSwitches + pasteAttempts + programmaticInputs}/10</li>
+                </ul>
+              </div>
+              <button onClick={() => navigate('/')} className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 py-4 px-8 rounded-2xl font-black uppercase text-[10px] tracking-[0.25em] hover:scale-105 transition-all">🏠 Voltar ao Início</button>
+            </div>
+          </div>
         ) : (
            <div className={`relative overflow-hidden ${alreadyDone ? 'bg-gradient-aurora' : 'bg-gradient-fire'} p-1 rounded-[44px] ${alreadyDone ? 'shadow-glow-cyan' : 'shadow-glow-orange'} animate-in zoom-in duration-500`}>
             {/* confete-style blobs decorativos */}
