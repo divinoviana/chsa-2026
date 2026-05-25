@@ -47,6 +47,69 @@ function formatTime(seconds: number): string {
   return `${m}:${s}`;
 }
 
+// ── Detecção de plágio por similaridade de texto (quadrigramas de caracteres) ─
+function textSimilarity(a: string, b: string): number {
+  const norm = (s: string) =>
+    s.toLowerCase()
+      .replace(/[^\wáéíóúàèìòùâêîôûãõç\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const na = norm(a);
+  const nb = norm(b);
+  if (na.length < 25 || nb.length < 25) return 0;
+  if (na === nb) return 1;
+  const ngrams = (s: string, n: number): Set<string> => {
+    const r = new Set<string>();
+    for (let i = 0; i <= s.length - n; i++) r.add(s.slice(i, i + n));
+    return r;
+  };
+  const ag = ngrams(na, 4);
+  const bg = ngrams(nb, 4);
+  let inter = 0;
+  ag.forEach(g => { if (bg.has(g)) inter++; });
+  const union = ag.size + bg.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+async function detectPlagiarism(
+  examId: string,
+  myDiscursiveAnswers: string[]
+): Promise<{ detected: boolean; matches: string[] }> {
+  try {
+    const validAnswers = myDiscursiveAnswers.filter(a => a.length >= 40);
+    if (validAnswers.length === 0) return { detected: false, matches: [] };
+
+    const { data: priorSubs } = await supabase
+      .from('submissions')
+      .select('student_name, content')
+      .eq('lesson_id', examId)
+      .limit(300);
+
+    if (!priorSubs || priorSubs.length === 0) return { detected: false, matches: [] };
+
+    const matches: string[] = [];
+    for (const sub of priorSubs) {
+      if (!Array.isArray(sub.content)) continue;
+      const otherAnswers: string[] = sub.content
+        .map((c: any) => String(c.answer || '').trim())
+        .filter((t: string) => t.length >= 40);
+      for (const myAns of validAnswers) {
+        for (const otherAns of otherAnswers) {
+          if (textSimilarity(myAns, otherAns) > 0.80) {
+            matches.push(sub.student_name);
+            break;
+          }
+        }
+      }
+    }
+    const unique = [...new Set(matches)];
+    return { detected: unique.length > 0, matches: unique };
+  } catch (e) {
+    console.warn('Verificação de plágio falhou silenciosamente:', e);
+    return { detected: false, matches: [] };
+  }
+}
+
 export const EvaluationView: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
@@ -66,6 +129,7 @@ export const EvaluationView: React.FC = () => {
   const [shuffledExam, setShuffledExam] = useState<any>(null);
   const [timeLeft, setTimeLeft] = useState(30 * 60);
   const [isAnnulled, setIsAnnulled] = useState(false);
+  const [plagiarismResult, setPlagiarismResult] = useState<{ detected: boolean; matches: string[] } | null>(null);
   const skipConfirmRef = useRef(false);
   const autoSubmittedRef = useRef(false);
 
@@ -243,16 +307,21 @@ export const EvaluationView: React.FC = () => {
         setIsCorrectingEssay(false);
       }
 
-      const finalScore = enemEval?.score0to10 || 0;
-      setScore(finalScore);
-      setEssayCorrection(enemEval || null);
+      // Detecção de plágio (compara com redações anteriores do mesmo exam)
+      const plagiarism = await detectPlagiarism(examId!, [essayText]);
+      setPlagiarismResult(plagiarism);
+      const essayFinalScore = plagiarism.detected ? 0 : (enemEval?.score0to10 || 0);
+      setScore(essayFinalScore);
+      setEssayCorrection(plagiarism.detected ? null : (enemEval || null));
 
       const integrityData = getIntegrityData();
-      const generalComment = enemEval
-        ? `${enemEval.generalComment} (Total: ${enemEval.totalScore}/1000)` +
-          ` · Aluno saiu da tela ${tabSwitches}× e tentou colar ${pasteAttempts}×.`
-        : `Redação enviada. ${wordCount} palavras, ${charCount} caracteres. ` +
-          `Aluno saiu da tela ${tabSwitches}× e tentou colar texto externo ${pasteAttempts}×.`;
+      const generalComment = plagiarism.detected
+        ? `⚠️ PLÁGIO DETECTADO: Alta similaridade com redação de ${plagiarism.matches.join(', ')}. Nota zerada automaticamente. Aguardando revisão do professor.`
+        : (enemEval
+            ? `${enemEval.generalComment} (Total: ${enemEval.totalScore}/1000)` +
+              ` · Aluno saiu da tela ${tabSwitches}× e tentou colar ${pasteAttempts}×.`
+            : `Redação enviada. ${wordCount} palavras, ${charCount} caracteres. ` +
+              `Aluno saiu da tela ${tabSwitches}× e tentou colar texto externo ${pasteAttempts}×.`);
 
       const { error } = await supabase.from('submissions').insert({
         student_id: student.id,
@@ -262,7 +331,7 @@ export const EvaluationView: React.FC = () => {
         lesson_id: examId,
         lesson_title: `Redação: ${title}`,
         subject: exam.subject,
-        score: finalScore,
+        score: essayFinalScore,
         content: [{
           question: title,
           answer: essayText,
@@ -275,13 +344,14 @@ export const EvaluationView: React.FC = () => {
           type: 'essay_enem',
           generalComment,
           corrections: [],
-          enem: enemEval || null,
+          enem: plagiarism.detected ? null : (enemEval || null),
           integrity: integrityData,
+          plagiarism,
         },
         teacher_feedback: null,
         submitted_at: nowIso,
         submission_date: nowIso,
-        status: enemEval ? 'graded' : 'pending',
+        status: plagiarism.detected ? 'plagiarism_suspected' : (enemEval ? 'graded' : 'pending'),
       });
       if (error) throw error;
       setIsFinished(true);
@@ -406,11 +476,20 @@ export const EvaluationView: React.FC = () => {
       finalScore = discursiveScoreAvg;
     }
     finalScore = Math.round(finalScore * 10) / 10; // 1 casa decimal
+
+    // 4) Detecção de plágio nas discursivas (compara com submissões anteriores)
+    const myDiscursiveTexts = discursiveQs.map((q: any) => String(answers[q.id] || '').trim());
+    const plagiarism = await detectPlagiarism(examId!, myDiscursiveTexts);
+    setPlagiarismResult(plagiarism);
+    if (plagiarism.detected) finalScore = 0;
+
     setScore(finalScore);
 
     const integrityData = getIntegrityData();
-    const baseComment = aiGeneralComment ||
-      `Simulado finalizado. Objetivas: ${objectiveCorrect}/${objectiveQs.length} acertos. Discursivas: nota média ${discursiveScoreAvg.toFixed(1)}.`;
+    const baseComment = plagiarism.detected
+      ? `⚠️ PLÁGIO DETECTADO: Alta similaridade com respostas de ${plagiarism.matches.join(', ')}. Nota zerada automaticamente. Aguardando revisão do professor.`
+      : (aiGeneralComment ||
+          `Simulado finalizado. Objetivas: ${objectiveCorrect}/${objectiveQs.length} acertos. Discursivas: nota média ${discursiveScoreAvg.toFixed(1)}.`);
     const integrityNote = (tabSwitches > 0 || pasteAttempts > 0 || extensionDetected || programmaticInputs > 0)
       ? ` ⚠️ Integridade: ${tabSwitches} saída(s) de tela, ${pasteAttempts} tentativa(s) de colar${extensionDetected ? ', extensão detectada' : ''}${programmaticInputs > 0 ? `, ${programmaticInputs} inserção(ões) programática(s)` : ''}.`
       : '';
@@ -437,11 +516,12 @@ export const EvaluationView: React.FC = () => {
           generalComment,
           corrections: correctionDetails,
           integrity: integrityData,
+          plagiarism,
         },
         teacher_feedback: null,
         submitted_at: nowIso,
         submission_date: nowIso,
-        status: 'completed',
+        status: plagiarism.detected ? 'plagiarism_suspected' : 'completed',
       });
       if (error) throw error;
 
@@ -465,8 +545,34 @@ export const EvaluationView: React.FC = () => {
 
   const subjectInfo = subjectsInfo[exam.subject as Subject];
 
+  const watermarkText = `${student?.name?.toUpperCase() ?? ''} · ${student?.school_class ?? ''} · ${new Date().toLocaleDateString('pt-BR')} · sistemadeavaliacao.com.br`;
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans pb-32 transition-colors duration-300">
+      {/* Marca d'água — visível em fotos da tela */}
+      {!isFinished && !checkingStatus && (
+        <div className="fixed inset-0 pointer-events-none z-30 overflow-hidden select-none" aria-hidden="true">
+          {[0,1,2,3,4,5,6,7,8].map(i => (
+            <div
+              key={i}
+              className="absolute font-black text-slate-700 dark:text-slate-200 whitespace-nowrap"
+              style={{
+                opacity: 0.055,
+                fontSize: '13px',
+                letterSpacing: '0.08em',
+                top: `${i * 12}%`,
+                left: '-15%',
+                right: '-15%',
+                transform: 'rotate(-28deg)',
+                textAlign: 'center',
+              }}
+            >
+              {watermarkText}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className={`${subjectInfo.color} text-white py-12 px-4 shadow-lg border-b border-white/5`}>
         <div className="container mx-auto max-w-3xl">
            <button onClick={() => navigate('/')} className="flex items-center gap-2 text-white/80 hover:text-white mb-6 text-sm font-bold transition-all">
@@ -756,10 +862,27 @@ export const EvaluationView: React.FC = () => {
                         : 'Sua redação foi enviada. O professor vai avaliar em breve.')
                     : 'Sua resposta foi enviada e a IA já corrigiu!'}
               </p>
-              {!alreadyDone && !isEssay && score > 0 && (
+              {/* Aviso de plágio detectado */}
+              {!alreadyDone && plagiarismResult?.detected && (
+                <div className="bg-red-50 dark:bg-red-950/30 border-2 border-red-400 rounded-3xl p-5 mt-4 mb-4 text-left max-w-md mx-auto">
+                  <p className="font-black text-red-700 dark:text-red-300 text-sm mb-1">🚫 Plágio Detectado — Nota Zerada</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Sua resposta apresentou alta similaridade com a de outro(s) aluno(s). A nota foi zerada automaticamente e o professor foi notificado para revisão.
+                  </p>
+                </div>
+              )}
+
+              {!alreadyDone && !isEssay && !plagiarismResult?.detected && score > 0 && (
                 <div className="inline-flex items-center gap-3 bg-gradient-fire text-white px-8 py-4 rounded-full shadow-glow-orange mt-4 mb-8 animate-pulse-glow">
                   <Award size={24}/>
                   <span className="text-3xl font-black tracking-tighter">{score.toFixed(1)}</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest opacity-90">/ 10</span>
+                </div>
+              )}
+              {!alreadyDone && !isEssay && plagiarismResult?.detected && (
+                <div className="inline-flex items-center gap-3 bg-red-600 text-white px-8 py-4 rounded-full shadow-2xl mt-4 mb-8">
+                  <ShieldAlert size={24}/>
+                  <span className="text-3xl font-black tracking-tighter">0,0</span>
                   <span className="text-[10px] font-black uppercase tracking-widest opacity-90">/ 10</span>
                 </div>
               )}
