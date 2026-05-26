@@ -17,6 +17,8 @@ export const GradeView: React.FC = () => {
   const [exams, setExams] = useState<any[]>([]);
   const [userSubmissions, setUserSubmissions] = useState<string[]>([]);
   const [publishedLessonIds, setPublishedLessonIds] = useState<string[]>([]);
+  const [activityExpiresMap, setActivityExpiresMap] = useState<Record<string, string>>({});
+  const [lessonTitleOverrides, setLessonTitleOverrides] = useState<Record<string, string>>({});
   const [loadingExams, setLoadingExams] = useState(true);
   
   const subjectKey = searchParams.get('subject') as Subject || 'filosofia';
@@ -74,10 +76,25 @@ export const GradeView: React.FC = () => {
       // IMPORTANTE: a tabela `activities` só tem `school_classes` (jsonb).
       // Pedir `school_class` (singular) faz o PostgREST devolver 400 e
       // o aluno acaba sem ver NENHUMA atividade. Selecionamos só o que existe.
-      const [actsRes, qsRes] = await Promise.all([
-        supabase.from('activities').select('lesson_id,school_classes'),
+      // Coleta todos os lesson_ids desta série/matéria para buscar overrides
+      const gradeData = curriculumData.find(g => g.id === Number(id));
+      const allLessonIds = gradeData
+        ? gradeData.bimesters.flatMap(b => b.lessons.filter(l => l.subject === subjectKey).map(l => l.id))
+        : [];
+
+      const [actsRes, qsRes, overridesRes] = await Promise.all([
+        supabase.from('activities').select('lesson_id,school_classes,expires_at'),
         supabase.from('questions').select('lesson_id').eq('subject', subjectKey),
+        allLessonIds.length > 0
+          ? supabase.from('lesson_overrides').select('id, data').in('id', allLessonIds)
+          : Promise.resolve({ data: [], error: null }),
       ]);
+
+      const overrideMap: Record<string, string> = {};
+      ((overridesRes as any).data || []).forEach((o: any) => {
+        if (o.data?.title) overrideMap[o.id] = o.data.title;
+      });
+      setLessonTitleOverrides(overrideMap);
 
       const lessonIdsWithQuestions = new Set<string>();
       (qsRes.data || []).forEach((row: any) => {
@@ -86,11 +103,14 @@ export const GradeView: React.FC = () => {
 
       const myClass = String(student.school_class).trim();
       const publishedIds = new Set<string>();
+      const expiresMap: Record<string, string> = {};
       (actsRes.data || []).forEach((row: any) => {
         if (!row.lesson_id || !lessonIdsWithQuestions.has(row.lesson_id)) return;
         if (!isItemTargetedAtClass(row, myClass)) return;
         publishedIds.add(row.lesson_id);
+        if (row.expires_at) expiresMap[row.lesson_id] = row.expires_at;
       });
+      setActivityExpiresMap(expiresMap);
 
       setExams(filteredExams);
       setUserSubmissions(subsKeys);
@@ -242,6 +262,34 @@ export const GradeView: React.FC = () => {
 
                           if (!isPublished) return null;
 
+                          const expiresAt = activityExpiresMap[lesson.id];
+                          const now = new Date();
+                          const isExpired = expiresAt ? new Date(expiresAt) < now : false;
+
+                          const deadlineBadge = (() => {
+                            if (!expiresAt) return null;
+                            if (isExpired) return <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">🔒 Prazo encerrado</span>;
+                            const diffMs = new Date(expiresAt).getTime() - now.getTime();
+                            const diffH = Math.floor(diffMs / 3600000);
+                            const color = diffH < 24 ? 'text-red-500' : diffH < 72 ? 'text-amber-500' : 'text-slate-400';
+                            const label = diffH < 1 ? '⏰ Menos de 1h' : diffH < 24 ? `⏰ ${diffH}h restantes` : `⏰ Prazo: ${new Date(expiresAt).toLocaleDateString('pt-BR')}`;
+                            return <span className={`text-[9px] font-black uppercase tracking-widest ${color}`}>{label}</span>;
+                          })();
+
+                          if (isExpired && !isLessonDone) {
+                            return (
+                              <div key={lesson.id} className="flex items-center p-6 opacity-50 cursor-not-allowed">
+                                <div className="w-12 h-12 rounded-2xl flex items-center justify-center mr-5 bg-slate-100 dark:bg-slate-800 text-slate-400">
+                                  <Lock size={20}/>
+                                </div>
+                                <div className="flex-1">
+                                  <span className="font-bold text-sm block text-slate-400">{lessonTitleOverrides[lesson.id] || lesson.title}</span>
+                                  {deadlineBadge}
+                                </div>
+                              </div>
+                            );
+                          }
+
                           return (
                             <Link key={lesson.id} to={`/lesson/${lesson.id}`} className="flex items-center p-6 hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition group">
                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all mr-5 ${isLessonDone ? 'bg-vibe-lime/20 text-vibe-lime' : `bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:${subject.gradient || subject.color} group-hover:text-white group-hover:rotate-6 group-hover:scale-110`}`}>
@@ -249,9 +297,12 @@ export const GradeView: React.FC = () => {
                                </div>
                                <div className="flex-1">
                                   <span className={`font-bold text-sm block transition-colors ${isLessonDone ? 'text-slate-400' : 'text-slate-700 dark:text-slate-200 group-hover:text-vibe-pink'}`}>
-                                    {lesson.title}
+                                    {lessonTitleOverrides[lesson.id] || lesson.title}
                                   </span>
-                                  {isLessonDone && <span className="text-[9px] font-black text-vibe-lime uppercase tracking-widest">✓ Atividade entregue</span>}
+                                  {isLessonDone
+                                    ? <span className="text-[9px] font-black text-vibe-lime uppercase tracking-widest">✓ Atividade entregue</span>
+                                    : deadlineBadge
+                                  }
                                </div>
                                <ChevronRight size={18} className="text-slate-200 dark:text-slate-700 group-hover:text-vibe-pink transition-all group-hover:translate-x-1"/>
                             </Link>

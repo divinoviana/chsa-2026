@@ -69,6 +69,13 @@ export const EvaluationView: React.FC = () => {
       }
       setExam(examData);
 
+      // Verifica prazo de entrega
+      if (examData.expires_at && new Date(examData.expires_at) < new Date()) {
+        alert('⏰ O prazo para esta avaliação foi encerrado. Você não pode mais realizá-la.');
+        navigate('/');
+        return;
+      }
+
       // Detecta tipo (redação vs simulado) e monta o título esperado da submissão
       const isEssayExam = examData.type === 'essay' || (examData.questions?.[0]?.type === 'essay');
       const expectedTitle = isEssayExam

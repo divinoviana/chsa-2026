@@ -13,7 +13,7 @@ import {
   Clock, Send, BrainCircuit, Sparkles, FileText, CheckCircle2,
   Filter, Download, GraduationCap, ChevronRight, ClipboardEdit, 
   BarChart3, Printer, Wand2, Library, ListChecks, Database,
-  Sun, Moon, Presentation, ClipboardList, LogOut, Pencil, Eye, UserCircle, RotateCw, MapPin, Crosshair, Target, AlertTriangle
+  Sun, Moon, Presentation, ClipboardList, LogOut, Pencil, Eye, UserCircle, RotateCw, MapPin, Crosshair, Target, AlertTriangle, ExternalLink, KeyRound, Menu
 } from 'lucide-react';
 
 // =====================================================================
@@ -243,6 +243,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Estados principais
   const [activeTab, setActiveTab] = useState<'question_bank' | 'submissions' | 'students' | 'messages' | 'lessons_list' | 'exam_generator' | 'essays' | 'attendance' | 'reports' | 'evaluations'>('lessons_list');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
@@ -292,6 +293,7 @@ export const AdminDashboard: React.FC = () => {
   const [examClass, setExamClass] = useState('all');
   const [examTopics, setExamTopics] = useState('');
   const [examTitle, setExamTitle] = useState('');
+  const [examExpiresAt, setExamExpiresAt] = useState('');
   const [examQuestionsDraft, setExamQuestionsDraft] = useState<any[]>([]);
   const [examNewQuestion, setExamNewQuestion] = useState<any>({
     type: 'objective',
@@ -305,6 +307,11 @@ export const AdminDashboard: React.FC = () => {
   const [isGeneratingExam, setIsGeneratingExam] = useState(false);
   const [isPublishingExam, setIsPublishingExam] = useState(false);
   const [publishedExams, setPublishedExams] = useState<any[]>([]);
+  const [editingPublishedExam, setEditingPublishedExam] = useState<any | null>(null);
+  const [editExamTitle, setEditExamTitle] = useState('');
+  const [editExamExpiresAt, setEditExamExpiresAt] = useState('');
+  const [editExamQuestions, setEditExamQuestions] = useState<any[]>([]);
+  const [isSavingEditedExam, setIsSavingEditedExam] = useState(false);
 
   // ── Frequência (Geolocalização) ────────────────
   const [schoolLocation, setSchoolLocation] = useState<any | null>(null);
@@ -319,6 +326,7 @@ export const AdminDashboard: React.FC = () => {
   const [examTarget, setExamTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [essayTarget, setEssayTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [activityTarget, setActivityTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
+  const [activityExpiresAt, setActivityExpiresAt] = useState('');
 
   // ── Banco de Temas ─────────────────────────────
   const [bankSelectedSubject, setBankSelectedSubject] = useState<string | null>(null);
@@ -359,6 +367,38 @@ export const AdminDashboard: React.FC = () => {
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isLoadingNotes, setIsLoadingNotes] = useState(false);
 
+  // Modal de reset de senha (super admin)
+  const [resetPasswordStudent, setResetPasswordStudent] = useState<any | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  const handleResetPassword = async () => {
+    if (!resetPasswordStudent || newPassword.length < 6 || isResettingPassword) return;
+    setIsResettingPassword(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({ student_id: resetPasswordStudent.id, new_password: newPassword }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Erro desconhecido');
+      alert(`✅ Senha de ${resetPasswordStudent.name} alterada com sucesso!`);
+      setResetPasswordStudent(null);
+      setNewPassword('');
+    } catch (e: any) {
+      alert('Erro ao redefinir senha: ' + (e?.message || ''));
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
 
   useEffect(() => {
     if (!isAuthLoading && !teacherSubject && !isSuper) {
@@ -768,16 +808,19 @@ export const AdminDashboard: React.FC = () => {
     setSelectedLessonForEdit({ ...lesson, title: displayTitle });
     setIsActivityEditorOpen(true);
     setActivityQuestionsDraft([]);
+    setActivityExpiresAt('');
 
     try {
-      const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('topic', displayTitle)
-        .eq('subject', lesson.subject)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      setActivityQuestionsDraft(data || []);
+      const [qRes, actRes] = await Promise.all([
+        supabase.from('questions').select('*').eq('topic', displayTitle).eq('subject', lesson.subject).order('created_at', { ascending: true }),
+        supabase.from('activities').select('expires_at').eq('lesson_id', lesson.id).maybeSingle(),
+      ]);
+      if (qRes.error) throw qRes.error;
+      setActivityQuestionsDraft(qRes.data || []);
+      if (actRes.data?.expires_at) {
+        const d = new Date(actRes.data.expires_at);
+        setActivityExpiresAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+      }
     } catch (e) {
       console.error("Erro ao carregar questões existentes:", e);
     }
@@ -826,6 +869,7 @@ export const AdminDashboard: React.FC = () => {
         // Tanto turma única quanto várias turmas vão pro mesmo campo.
         if (activityTarget.mode === 'single' && activityTarget.classes[0]) actPayload.school_classes = [activityTarget.classes[0]];
         if (activityTarget.mode === 'multi' && activityTarget.classes.length > 0) actPayload.school_classes = activityTarget.classes;
+        if (activityExpiresAt) actPayload.expires_at = new Date(activityExpiresAt).toISOString();
         // tolerante a schema sem essas colunas
         let lastErr: any = null;
         for (let i = 0; i < 4; i++) {
@@ -1280,6 +1324,7 @@ export const AdminDashboard: React.FC = () => {
         school_classes: schoolClassesArray,
         topics: examTopics.split(',').map(t => t.trim()).filter(Boolean),
         questions: examQuestionsDraft,
+        expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1317,6 +1362,7 @@ export const AdminDashboard: React.FC = () => {
       setExamQuestionsDraft([]);
       setExamTitle('');
       setExamTopics('');
+      setExamExpiresAt('');
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar: ' + (e?.message || ''));
@@ -1337,34 +1383,75 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const openEditPublishedExam = (exam: any) => {
+    setEditingPublishedExam(exam);
+    setEditExamTitle(exam.title || '');
+    setEditExamQuestions(JSON.parse(JSON.stringify(exam.questions || [])));
+    // Converte ISO para formato datetime-local (YYYY-MM-DDTHH:mm)
+    if (exam.expires_at) {
+      const d = new Date(exam.expires_at);
+      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+        .toISOString().slice(0, 16);
+      setEditExamExpiresAt(local);
+    } else {
+      setEditExamExpiresAt('');
+    }
+  };
+
+  const handleSaveEditedExam = async () => {
+    if (!editingPublishedExam) return;
+    setIsSavingEditedExam(true);
+    try {
+      const { error } = await supabase
+        .from('bimonthly_exams')
+        .update({
+          title: editExamTitle.trim(),
+          questions: editExamQuestions,
+          expires_at: editExamExpiresAt ? new Date(editExamExpiresAt).toISOString() : null,
+        })
+        .eq('id', editingPublishedExam.id);
+      if (error) throw error;
+      setEditingPublishedExam(null);
+      fetchPublishedExams();
+      alert('Simulado atualizado com sucesso!');
+    } catch (e: any) {
+      alert('Erro ao salvar: ' + e.message);
+    } finally {
+      setIsSavingEditedExam(false);
+    }
+  };
+
   const handleGenerateFullReport = async () => {
     setIsGeneratingReport(true);
+    setAiReportResult(null);
     try {
       const { generatePedagogicalSummary } = await import('../services/aiService');
 
-      // Resolve nome do aluno selecionado (caso individual)
+      // Resolve o aluno selecionado pelo ID (correção: antes usava s.name como value)
       const targetStudent = reportTarget === 'student'
         ? students.find(s => s.id === selectedReportStudent)
         : null;
 
-      // Submissões relevantes para o relatório
+      // Submissões relevantes
       const relevant = submissions.filter(s => {
-        if (reportTarget === 'student') {
-          return s.student_id === selectedReportStudent
-              || (targetStudent && s.student_name?.toLowerCase().trim() === targetStudent.name?.toLowerCase().trim());
-        }
+        if (reportTarget === 'student') return s.student_id === selectedReportStudent;
         return filterClass === 'all' || s.school_class === filterClass;
       });
 
-      // Buscar anotações (student_notes) + extrair categoria pra enriquecer
-      // o cruzamento da IA. Cada categoria vira um sinal pedagógico distinto.
+      // Buscar anotações (student_notes) com filtro correto
       let behaviorNotes: string[] = [];
       try {
         let qb = supabase.from('student_notes').select('*').order('created_at', { ascending: false });
-        if (reportTarget === 'student' && selectedReportStudent) qb = qb.eq('student_id', selectedReportStudent);
+        if (reportTarget === 'student' && selectedReportStudent) {
+          qb = qb.eq('student_id', selectedReportStudent);
+        } else if (reportTarget === 'class' && filterClass !== 'all') {
+          const classStudentIds = students
+            .filter(s => s.school_class === filterClass)
+            .map(s => s.id);
+          if (classStudentIds.length > 0) qb = qb.in('student_id', classStudentIds);
+        }
         const { data: notes } = await qb;
         behaviorNotes = (notes || []).map((n: any) => {
-          // Tenta extrair categoria da coluna ou do prefixo "[categoria] texto"
           let cat = (n.category || '').toLowerCase();
           let content = n.content || '';
           if (!cat) {
@@ -1373,30 +1460,46 @@ export const AdminDashboard: React.FC = () => {
           }
           const subj = n.subject || n.teacher_subject || 'geral';
           const date = n.created_at ? new Date(n.created_at).toLocaleDateString('pt-BR') : '';
-          return `[${cat || 'geral'} • ${subj} • ${date}] ${content}`;
+          // Para relatório de turma, inclui o nome do aluno na anotação
+          const stuName = reportTarget === 'class'
+            ? (students.find(s => s.id === n.student_id)?.name || 'Aluno')
+            : '';
+          return `[${cat || 'geral'} • ${subj} • ${date}${stuName ? ' • ' + stuName : ''}] ${content}`;
         });
       } catch (e) {
         console.warn('Falha ao buscar student_notes:', e);
       }
 
-      const activities = relevant.map((s: any) => ({
-        title: s.lesson_title,
-        score: Number(s.score) || 0,
-        bimester: (s.lesson_id ? lessonToBimesterMap[s.lesson_id] : null) || lessonToBimesterMap[s.lesson_title] || undefined,
-        date: s.submitted_at || s.submission_date,
-        subject: s.subject,
-      }));
+      // Flags de integridade
+      const annulledCount = relevant.filter(s => s.status === 'annulled').length;
+      const plagiarismCount = relevant.filter(s => s.status === 'plagiarism_suspected').length;
+
+      // Atividades (exclui anuladas do cálculo de média)
+      const activities = relevant
+        .filter(s => s.status !== 'annulled')
+        .map((s: any) => ({
+          title: s.lesson_title,
+          score: Number(s.score) || 0,
+          bimester: (s.lesson_id ? lessonToBimesterMap[s.lesson_id] : null) || lessonToBimesterMap[s.lesson_title] || undefined,
+          date: s.submitted_at || s.submission_date,
+          subject: s.subject,
+          teacherFeedback: s.teacher_feedback || '',
+        }));
 
       const result = await generatePedagogicalSummary(
         reportTarget === 'student' ? 'INDIVIDUAL' : 'TURMA',
         {
           subject: teacherSubject || 'Geral',
-          grades: relevant.map(s => Number(s.score) || 0),
-          notes: relevant.map(s => s.teacher_feedback || '').filter(Boolean),
+          grades: activities.map(a => a.score),
+          notes: activities.map(a => a.teacherFeedback).filter(Boolean),
           studentName: targetStudent?.name,
-          schoolClass: filterClass,
+          studentGrade: targetStudent?.grade,
+          schoolClass: reportTarget === 'student'
+            ? (targetStudent?.school_class || filterClass)
+            : filterClass,
           activities,
           behaviorNotes,
+          flags: { annulled: annulledCount, plagiarism: plagiarismCount },
         }
       );
       setAiReportResult(result);
@@ -1456,6 +1559,29 @@ export const AdminDashboard: React.FC = () => {
       console.error(e);
     } finally {
       setIsRequestingRedo(false);
+    }
+  };
+
+  const [yearTurnoverLoading, setYearTurnoverLoading] = useState(false);
+
+  const handleYearTurnover = async () => {
+    const third = students.filter(s => String(s.grade) === '3');
+    if (third.length === 0) { alert('Nenhum aluno da 3ª série encontrado.'); return; }
+    const confirmed = window.confirm(
+      `⚠️ VIRADA DE ANO\n\nEssa ação irá EXCLUIR permanentemente ${third.length} aluno(s) da 3ª série do banco de dados.\n\nEssa operação não pode ser desfeita.\n\nConfirmar?`
+    );
+    if (!confirmed) return;
+    setYearTurnoverLoading(true);
+    try {
+      const ids = third.map(s => s.id);
+      const { error } = await supabase.from('students').delete().in('id', ids);
+      if (error) throw error;
+      alert(`✅ ${third.length} aluno(s) da 3ª série removidos com sucesso.\n\nObs: as contas de login (auth.users) precisam ser removidas manualmente pelo Supabase Dashboard.`);
+      fetchStudents();
+    } catch (e: any) {
+      alert('Erro ao remover alunos: ' + (e?.message || ''));
+    } finally {
+      setYearTurnoverLoading(false);
     }
   };
 
@@ -1675,8 +1801,20 @@ export const AdminDashboard: React.FC = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex transition-colors duration-300 relative">
       <div className="absolute inset-0 bg-mesh-bg opacity-40 dark:opacity-15 pointer-events-none"></div>
 
+      {/* Overlay escuro no mobile quando sidebar está aberta */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-slate-950/60 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar — gradient brand */}
-      <aside className="w-72 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-r dark:border-slate-800 flex flex-col transition-colors relative z-10">
+      <aside className={`
+        fixed md:relative inset-y-0 left-0 z-30
+        w-72 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-r dark:border-slate-800 flex flex-col transition-transform duration-300 ease-in-out
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
         <div className="p-8">
           <div className="flex items-center gap-3 mb-8">
             <div className="w-12 h-12 bg-gradient-vibe rounded-[18px] flex items-center justify-center text-white shadow-glow-purple animate-float">
@@ -1707,7 +1845,7 @@ export const AdminDashboard: React.FC = () => {
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id as any)}
+                  onClick={() => { setActiveTab(item.id as any); setSidebarOpen(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] transition-all cursor-pointer ${
                     isActive
                       ? `${item.grad} text-white ${item.glow} translate-x-2 scale-[1.02]`
@@ -1721,7 +1859,15 @@ export const AdminDashboard: React.FC = () => {
           </nav>
         </div>
 
-        <div className="mt-auto p-8 border-t dark:border-slate-800">
+        <div className="mt-auto p-8 border-t dark:border-slate-800 space-y-2">
+           <a
+             href="https://sge.seduc.to.pontoid.com.br/Acesso/Entrar?ReturnUrl=%2f"
+             target="_blank"
+             rel="noopener noreferrer"
+             className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-blue-500 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 hover:translate-x-1 transition-all"
+           >
+             <ExternalLink size={18}/> SGE — Secretaria TO
+           </a>
            <button
              onClick={logoutTeacher}
              className="w-full flex items-center gap-3 px-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.25em] text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:scale-105 transition-all cursor-pointer"
@@ -1731,10 +1877,19 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto h-screen p-8 relative z-10">
+      <main className="flex-1 overflow-y-auto h-screen p-4 md:p-8 relative z-10">
         <div className="max-w-6xl mx-auto">
           {/* Header Superior */}
-          <header className="flex flex-wrap justify-between items-center gap-6 mb-10">
+          <header className="flex flex-wrap justify-between items-center gap-4 mb-8 md:mb-10">
+            <div className="flex items-center gap-3">
+              {/* Botão hamburger — só no mobile */}
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="md:hidden p-2.5 rounded-xl bg-white dark:bg-slate-800 shadow-sm border dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:scale-110 transition-all"
+                aria-label="Abrir menu"
+              >
+                <Menu size={20} />
+              </button>
             <div>
               <h2 className="text-4xl font-black tracking-tighter leading-none font-display">
                 <span className="text-gradient-vibe">
@@ -1764,6 +1919,7 @@ export const AdminDashboard: React.FC = () => {
                  )}
               </div>
             </div>
+            </div>{/* fecha flex items-center gap-3 (hamburger + título) */}
 
             <div className="flex flex-wrap items-center gap-4">
                 {['students', 'submissions', 'evaluations', 'question_bank', 'lessons_list'].includes(activeTab) && (
@@ -2456,16 +2612,27 @@ export const AdminDashboard: React.FC = () => {
 
           {activeTab === 'students' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-               <div className="flex justify-end gap-2 mb-4">
+               <div className="flex justify-end gap-2 mb-4 flex-wrap">
                   {isSuper && (
-                    <button 
-                      onClick={handleSeedStudents}
-                      disabled={isSeedingStudents}
-                      className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-                    >
-                      {isSeedingStudents ? <Loader2 className="animate-spin" size={16}/> : <Users size={16}/>}
-                      Sincronizar Estudantes
-                    </button>
+                    <>
+                      <button
+                        onClick={handleSeedStudents}
+                        disabled={isSeedingStudents}
+                        className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 transition-all cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                      >
+                        {isSeedingStudents ? <Loader2 className="animate-spin" size={16}/> : <Users size={16}/>}
+                        Sincronizar Estudantes
+                      </button>
+                      <button
+                        onClick={handleYearTurnover}
+                        disabled={yearTurnoverLoading}
+                        className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-700 transition-all cursor-pointer shadow-lg shadow-rose-500/20 disabled:opacity-50"
+                        title="Remove todos os alunos da 3ª série (virada de ano letivo)"
+                      >
+                        {yearTurnoverLoading ? <Loader2 className="animate-spin" size={16}/> : <GraduationCap size={16}/>}
+                        Virada de Ano · Excluir 3ª Série
+                      </button>
+                    </>
                   )}
                </div>
                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -2485,7 +2652,7 @@ export const AdminDashboard: React.FC = () => {
                          <h4 className="font-black text-slate-800 dark:text-white uppercase tracking-tighter text-sm mb-1">{st.name}</h4>
                          <span className="text-[10px] font-black text-tocantins-blue dark:text-tocantins-yellow uppercase tracking-widest">{st.grade}ª Série • {st.school_class}</span>
 
-                         <div className="mt-4 flex gap-2">
+                         <div className="mt-4 flex gap-2 justify-center">
                             <button
                               onClick={() => openNotesModal(st)}
                               title="Anotações sobre o estudante"
@@ -2503,6 +2670,15 @@ export const AdminDashboard: React.FC = () => {
                             >
                                <MessageSquare size={18}/>
                             </button>
+                            {isSuper && (
+                              <button
+                                onClick={() => { setResetPasswordStudent(st); setNewPassword(''); }}
+                                title="Redefinir senha do estudante"
+                                className="p-2 text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
+                              >
+                                <KeyRound size={18}/>
+                              </button>
+                            )}
                          </div>
                       </div>
                    </div>
@@ -2652,6 +2828,23 @@ export const AdminDashboard: React.FC = () => {
                     value={examTarget}
                     onChange={setExamTarget}
                   />
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">
+                      ⏰ Prazo de entrega (opcional — deixe em branco para sem prazo)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={examExpiresAt}
+                      onChange={e => setExamExpiresAt(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
+                    />
+                    {examExpiresAt && (
+                      <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 ml-1">
+                        Alunos não poderão responder após {new Date(examExpiresAt).toLocaleString('pt-BR')}.
+                      </p>
+                    )}
+                  </div>
 
                   <button
                     onClick={handleGenerateExam}
@@ -2819,15 +3012,32 @@ export const AdminDashboard: React.FC = () => {
                               {exam.bimester}º Bimestre • {exam.grade}ª Série • {exam.school_class || 'Todas as turmas'} • {(exam.questions?.length || 0)} questões
                               {exam.created_at && ` • ${new Date(exam.created_at).toLocaleDateString('pt-BR')}`}
                             </p>
+                            {exam.expires_at && (() => {
+                              const expired = new Date(exam.expires_at) < new Date();
+                              return (
+                                <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
+                                  {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(exam.expires_at).toLocaleString('pt-BR')}
+                                </p>
+                              );
+                            })()}
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeletePublishedExam(exam.id)}
-                          className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
-                          title="Excluir simulado"
-                        >
-                          <Trash2 size={16}/>
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => openEditPublishedExam(exam)}
+                            className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
+                            title="Editar simulado"
+                          >
+                            <Pencil size={16}/>
+                          </button>
+                          <button
+                            onClick={() => handleDeletePublishedExam(exam.id)}
+                            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
+                            title="Excluir simulado"
+                          >
+                            <Trash2 size={16}/>
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -3183,18 +3393,18 @@ export const AdminDashboard: React.FC = () => {
                             <input 
                               type="radio" 
                               name="report_type" 
-                              checked={reportTarget === 'student'} 
-                              onChange={() => setReportTarget('student')}
+                              checked={reportTarget === 'student'}
+                              onChange={() => { setReportTarget('student'); setAiReportResult(null); }}
                               className="accent-tocantins-blue"
                             />
                             <span className="font-bold text-slate-700 dark:text-slate-200 text-xs uppercase tracking-widest">Por Estudante</span>
                          </label>
                          <label className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 rounded-2xl cursor-pointer shadow-sm">
-                            <input 
-                              type="radio" 
-                              name="report_type" 
-                              checked={reportTarget === 'class'} 
-                              onChange={() => setReportTarget('class')}
+                            <input
+                              type="radio"
+                              name="report_type"
+                              checked={reportTarget === 'class'}
+                              onChange={() => { setReportTarget('class'); setAiReportResult(null); }}
                               className="accent-tocantins-blue"
                             />
                             <span className="font-bold text-slate-700 dark:text-slate-200 text-xs uppercase tracking-widest">Por Turma</span>
@@ -3204,13 +3414,13 @@ export const AdminDashboard: React.FC = () => {
                       <div className="space-y-1">
                          <label className="text-[10px] font-black text-slate-400 uppercase ml-4 tracking-widest">Alvo da Análise</label>
                          {reportTarget === 'student' ? (
-                           <select 
+                           <select
                              value={selectedReportStudent}
-                             onChange={e => setSelectedReportStudent(e.target.value)}
+                             onChange={e => { setSelectedReportStudent(e.target.value); setAiReportResult(null); }}
                              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-6 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
                            >
                               <option value="">Selecione um Estudante...</option>
-                              {students.map(s => <option key={s.id} value={s.name}>{s.name} ({s.school_class})</option>)}
+                              {students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.school_class})</option>)}
                            </select>
                          ) : (
                            <select 
@@ -3367,15 +3577,27 @@ export const AdminDashboard: React.FC = () => {
                  <div className="space-y-6 bg-slate-50/50 dark:bg-slate-800/30 p-8 rounded-[32px] border dark:border-slate-800 self-start">
                     {/* Seletor de turmas-alvo da atividade (só pra atividade nova; depois de criada o vínculo já existe) */}
                     {!savedActivities.includes(selectedLessonForEdit?.id) && (
-                      <div className="pb-4 mb-2 border-b border-dashed dark:border-slate-700">
+                      <div className="pb-4 mb-2 border-b border-dashed dark:border-slate-700 space-y-4">
                         <TargetClassPicker
                           availableClasses={classesForGrade(String(selectedLessonForEdit?.id?.charAt(0) || ''))}
                           value={activityTarget}
                           onChange={setActivityTarget}
                         />
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-2 ml-2 italic">
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
                           A segmentação se aplica quando a primeira questão for adicionada.
                         </p>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega (opcional)</label>
+                          <input
+                            type="datetime-local"
+                            value={activityExpiresAt}
+                            onChange={e => setActivityExpiresAt(e.target.value)}
+                            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-tocantins-blue/50"
+                          />
+                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
+                            Após o prazo, a atividade fica bloqueada para os alunos.
+                          </p>
+                        </div>
                       </div>
                     )}
                     <h4 className="text-[10px] font-black text-tocantins-blue dark:text-tocantins-yellow uppercase tracking-widest flex items-center gap-2">
@@ -3439,7 +3661,7 @@ export const AdminDashboard: React.FC = () => {
                          </div>
                        )}
 
-                       <button 
+                       <button
                          onClick={handleAddQuestionToDraft}
                          disabled={isSavingActivity || !newQuestion.question_text.trim()}
                          className="w-full mt-4 bg-tocantins-blue dark:bg-tocantins-yellow text-white dark:text-slate-950 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-500/20 dark:shadow-none hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
@@ -3447,6 +3669,32 @@ export const AdminDashboard: React.FC = () => {
                          {isSavingActivity ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>}
                          Adicionar Questão ao Banco
                        </button>
+
+                       {/* Prazo de entrega para atividade existente */}
+                       {savedActivities.includes(selectedLessonForEdit?.id) && (
+                         <div className="mt-4 pt-4 border-t border-dashed dark:border-slate-700 space-y-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega</label>
+                           <input
+                             type="datetime-local"
+                             value={activityExpiresAt}
+                             onChange={e => setActivityExpiresAt(e.target.value)}
+                             className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-tocantins-blue/50"
+                           />
+                           <button
+                             onClick={async () => {
+                               try {
+                                 await supabase.from('activities').update({
+                                   expires_at: activityExpiresAt ? new Date(activityExpiresAt).toISOString() : null,
+                                 }).eq('lesson_id', selectedLessonForEdit.id);
+                                 alert('Prazo salvo com sucesso!');
+                               } catch(e: any) { alert('Erro ao salvar prazo: ' + e.message); }
+                             }}
+                             className="w-full bg-slate-900 dark:bg-slate-700 text-white py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                           >
+                             <Save size={14}/> Salvar Prazo
+                           </button>
+                         </div>
+                       )}
                     </div>
                  </div>
               </div>
@@ -3976,6 +4224,214 @@ export const AdminDashboard: React.FC = () => {
       )}
       </main>
     </div>
+
+    {/* Modal: Editar Simulado Publicado */}
+    {editingPublishedExam && (
+      <div className="fixed inset-0 z-[300] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setEditingPublishedExam(null)}>
+        <div className="bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border dark:border-slate-800 w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          {/* Cabeçalho */}
+          <div className="flex items-center justify-between px-8 pt-7 pb-4 border-b dark:border-slate-800 shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-vibe rounded-xl flex items-center justify-center text-white">
+                <Pencil size={18}/>
+              </div>
+              <div>
+                <h2 className="font-black text-slate-800 dark:text-white text-base tracking-tight">Editar Simulado</h2>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  {editExamQuestions.length} questões · {editingPublishedExam.bimester}º Bimestre
+                </p>
+              </div>
+            </div>
+            <button onClick={() => setEditingPublishedExam(null)} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400">
+              <X size={18}/>
+            </button>
+          </div>
+
+          {/* Corpo rolável */}
+          <div className="overflow-y-auto flex-1 px-8 py-6 space-y-6">
+            {/* Título */}
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Título do Simulado</label>
+              <input
+                type="text"
+                value={editExamTitle}
+                onChange={e => setEditExamTitle(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+              />
+            </div>
+
+            {/* Prazo */}
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">⏰ Prazo de entrega (deixe em branco = sem prazo)</label>
+              <input
+                type="datetime-local"
+                value={editExamExpiresAt}
+                onChange={e => setEditExamExpiresAt(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+              />
+              {editExamExpiresAt && (
+                <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1 ml-1">
+                  Encerra em {new Date(editExamExpiresAt).toLocaleString('pt-BR')}
+                </p>
+              )}
+              {!editExamExpiresAt && editingPublishedExam?.expires_at && (
+                <p className="text-[10px] font-bold text-red-500 mt-1 ml-1">Prazo anterior removido — sem prazo ao salvar.</p>
+              )}
+            </div>
+
+            {/* Questões */}
+            {editExamQuestions.map((q: any, qi: number) => (
+              <div key={qi} className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 space-y-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="w-7 h-7 bg-slate-800 dark:bg-slate-950 text-white rounded-lg flex items-center justify-center font-black text-xs">{qi + 1}</span>
+                  <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${q.type === 'discursive' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'}`}>
+                    {q.type === 'discursive' ? 'Discursiva' : 'Objetiva'}
+                  </span>
+                </div>
+
+                {/* Texto do fragmento (se houver) */}
+                {q.textFragment !== undefined && (
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Texto de apoio (opcional)</label>
+                    <textarea
+                      rows={2}
+                      value={q.textFragment || ''}
+                      onChange={e => {
+                        const updated = [...editExamQuestions];
+                        updated[qi] = { ...updated[qi], textFragment: e.target.value };
+                        setEditExamQuestions(updated);
+                      }}
+                      className="w-full bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple resize-none"
+                    />
+                  </div>
+                )}
+
+                {/* Enunciado */}
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Enunciado</label>
+                  <textarea
+                    rows={3}
+                    value={q.questionText || ''}
+                    onChange={e => {
+                      const updated = [...editExamQuestions];
+                      updated[qi] = { ...updated[qi], questionText: e.target.value };
+                      setEditExamQuestions(updated);
+                    }}
+                    className="w-full bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple resize-none"
+                  />
+                </div>
+
+                {/* Alternativas (só para objetivas) */}
+                {q.type !== 'discursive' && q.options && (
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Alternativas · clique em ✓ para marcar a correta</label>
+                    {(['a','b','c','d','e'] as const).map(opt => (
+                      q.options[opt] !== undefined ? (
+                        <div key={opt} className={`flex items-center gap-2 p-2 rounded-xl border-2 transition-all ${q.correctOption === opt ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}>
+                          <button
+                            onClick={() => {
+                              const updated = [...editExamQuestions];
+                              updated[qi] = { ...updated[qi], correctOption: opt };
+                              setEditExamQuestions(updated);
+                            }}
+                            className={`w-7 h-7 rounded-lg font-black text-xs shrink-0 flex items-center justify-center transition-all ${q.correctOption === opt ? 'bg-emerald-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 hover:bg-emerald-100'}`}
+                            title="Marcar como correta"
+                          >
+                            {q.correctOption === opt ? '✓' : opt.toUpperCase()}
+                          </button>
+                          <input
+                            type="text"
+                            value={q.options[opt]}
+                            onChange={e => {
+                              const updated = [...editExamQuestions];
+                              updated[qi] = { ...updated[qi], options: { ...updated[qi].options, [opt]: e.target.value } };
+                              setEditExamQuestions(updated);
+                            }}
+                            className="flex-1 bg-transparent text-sm text-slate-700 dark:text-slate-200 outline-none"
+                          />
+                        </div>
+                      ) : null
+                    ))}
+                  </div>
+                )}
+
+                {/* Explicação */}
+                {q.explanation !== undefined && (
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Explicação / gabarito comentado (opcional)</label>
+                    <textarea
+                      rows={2}
+                      value={q.explanation || ''}
+                      onChange={e => {
+                        const updated = [...editExamQuestions];
+                        updated[qi] = { ...updated[qi], explanation: e.target.value };
+                        setEditExamQuestions(updated);
+                      }}
+                      className="w-full bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple resize-none"
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Rodapé */}
+          <div className="px-8 py-5 border-t dark:border-slate-800 flex justify-end gap-3 shrink-0">
+            <button onClick={() => setEditingPublishedExam(null)} className="px-5 py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-sm hover:scale-105 transition-all">
+              Cancelar
+            </button>
+            <button
+              onClick={handleSaveEditedExam}
+              disabled={isSavingEditedExam}
+              className="px-6 py-2.5 rounded-2xl bg-gradient-vibe text-white font-black text-sm shadow-glow-purple hover:scale-105 transition-all flex items-center gap-2 disabled:opacity-50"
+            >
+              {isSavingEditedExam ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+              Salvar Alterações
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Modal: Redefinir Senha (super admin) */}
+    {resetPasswordStudent && (
+      <div className="fixed inset-0 z-[300] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setResetPasswordStudent(null)}>
+        <div className="bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border dark:border-slate-800 w-full max-w-sm p-8 space-y-6" onClick={e => e.stopPropagation()}>
+          <div className="text-center">
+            <div className="w-14 h-14 bg-rose-100 dark:bg-rose-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <KeyRound size={28} className="text-rose-500"/>
+            </div>
+            <h3 className="text-lg font-black text-slate-800 dark:text-white tracking-tight">Redefinir Senha</h3>
+            <p className="text-xs text-slate-400 mt-1 font-bold uppercase tracking-widest">{resetPasswordStudent.name}</p>
+          </div>
+          <div className="space-y-3">
+            <input
+              type="password"
+              placeholder="Nova senha (mín. 6 caracteres)"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleResetPassword(); }}
+              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl text-sm outline-none dark:text-white font-medium"
+              autoFocus
+            />
+            <p className="text-[10px] text-slate-400 text-center">A nova senha será aplicada imediatamente ao login do aluno.</p>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={() => setResetPasswordStudent(null)} className="flex-1 py-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-xs uppercase tracking-widest hover:scale-105 transition-all">
+              Cancelar
+            </button>
+            <button
+              onClick={handleResetPassword}
+              disabled={isResettingPassword || newPassword.length < 6}
+              className="flex-1 py-3 rounded-2xl bg-rose-500 text-white font-black text-xs uppercase tracking-widest hover:bg-rose-600 hover:scale-105 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {isResettingPassword ? <Loader2 size={14} className="animate-spin"/> : <KeyRound size={14}/>}
+              Salvar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 };

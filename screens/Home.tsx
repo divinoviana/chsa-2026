@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { subjectsInfo } from '../data';
 import { TEACHER_INFO } from '../data_admin';
-import { BookOpen, GraduationCap, ChevronRight, BrainCircuit, BellRing, Loader2, Clock, MapPin, CheckCircle2, Crosshair } from 'lucide-react';
+import { BookOpen, GraduationCap, ChevronRight, BrainCircuit, BellRing, Loader2, Clock, MapPin, CheckCircle2, Crosshair, ExternalLink } from 'lucide-react';
 import { Subject } from '../types';
 import { curriculumData } from '../data';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,7 @@ export const Home: React.FC = () => {
   const { student, isLoading } = useAuth();
   const [exams, setExams] = useState<any[]>([]);
   const [finishedExamTitles, setFinishedExamTitles] = useState<string[]>([]);
+  const [finishedExamIds, setFinishedExamIds] = useState<Set<string>>(new Set());
   const [publishedCountBySubject, setPublishedCountBySubject] = useState<Record<string, number>>({});
   const [attendanceToday, setAttendanceToday] = useState<any | null>(null);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -126,18 +127,25 @@ export const Home: React.FC = () => {
 
       const { data: subsData, error: subsErr } = await supabase
         .from('submissions')
-        .select('lesson_title')
+        .select('lesson_title, lesson_id')
         .eq('student_id', student.id);
       if (subsErr) throw subsErr;
 
       // Considera tanto simulados ("Avaliação Bimestral" / título custom)
       // quanto redações ("Redação: <título>") como já realizados.
+      // Usa tanto o título quanto o lesson_id (uuid) — o ID é mais confiável
+      // pois não depende de correspondência exata de string.
       const subData = (subsData || [])
         .map((s: any) => (s.lesson_title || '').trim())
         .filter((title: string) => title.length > 0);
 
+      const subIds = new Set<string>(
+        (subsData || []).map((s: any) => s.lesson_id).filter(Boolean)
+      );
+
       setExams(examData);
       setFinishedExamTitles(subData);
+      setFinishedExamIds(subIds);
 
       // Conta atividades publicadas por matéria, restritas à série do aluno
       const myGradeNum = Number(student.grade);
@@ -195,7 +203,13 @@ export const Home: React.FC = () => {
   // Funciona tanto para simulados quanto para redações:
   //   - redação:  lesson_title = "Redação: <título>"
   //   - simulado: lesson_title = "Avaliação Bimestral: Xº Bimestre" (ou customizado)
+  const now = new Date();
   const pendingExams = exams.filter(e => {
+    // Prazo encerrado — não mostra mais para o aluno
+    if (e.expires_at && new Date(e.expires_at) < now) return false;
+    // Verifica primeiro por ID (mais confiável — não depende de correspondência de string)
+    if (finishedExamIds.has(e.id)) return false;
+    // Fallback por título (para submissões antigas sem lesson_id preenchido)
     const isEssayItem = e.type === 'essay' || e.questions?.[0]?.type === 'essay';
     const expectedTitle = isEssayItem
       ? `Redação: ${(e.title || 'Redação').trim()}`
@@ -272,6 +286,25 @@ export const Home: React.FC = () => {
           </div>
         </div>
 
+        {/* Portal do Aluno — SEDUC Tocantins */}
+        <a
+          href="https://portaldoaluno.seduc.to.pontoid.com.br/Home/Login"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="relative overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-700 p-1 rounded-[32px] shadow-xl hover:-translate-y-1 hover:scale-[1.02] transition-all group animate-in zoom-in duration-500"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-[28px] p-6 flex items-center gap-5">
+            <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-teal-700 rounded-2xl flex items-center justify-center text-white text-2xl shrink-0 shadow-md group-hover:scale-110 group-hover:rotate-6 transition-transform duration-300">
+              🎓
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base font-black tracking-tight font-display text-slate-800 dark:text-slate-100">Portal do Aluno — SEDUC Tocantins</h3>
+              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">Consulte seus boletins e notas no sistema do Estado</p>
+            </div>
+            <ExternalLink size={18} className="text-emerald-400 group-hover:text-emerald-600 shrink-0 transition-colors" />
+          </div>
+        </a>
+
         {pendingExams.length > 0 && (
            <div className="relative overflow-hidden bg-gradient-fire p-1 rounded-[40px] shadow-glow-orange animate-in zoom-in duration-500">
             <div className="bg-white dark:bg-slate-900 rounded-[36px] p-8">
@@ -289,23 +322,50 @@ export const Home: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  {pendingExams.map(exam => {
                    const isEssayItem = exam.type === 'essay' || exam.questions?.[0]?.type === 'essay';
+                   const subjInfo = !isEssayItem ? subjectsInfo[exam.subject as Subject] : null;
                    return (
                     <Link
                       key={exam.id}
                       to={`/evaluation/${exam.id}`}
-                      className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-amber-100 dark:border-amber-900 hover:border-amber-400 dark:hover:border-amber-600 hover:shadow-lg transition-all group flex items-center justify-between"
+                      className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-amber-100 dark:border-amber-900 hover:border-amber-400 dark:hover:border-amber-600 hover:shadow-lg transition-all group flex items-center justify-between gap-3"
                     >
                        <div className="flex items-center gap-4 min-w-0">
-                          <div className={`w-10 h-10 ${isEssayItem ? 'bg-gradient-fire' : subjectsInfo[exam.subject as Subject].color} rounded-xl flex items-center justify-center text-white text-xl shrink-0`}>
-                             {isEssayItem ? '✍️' : subjectsInfo[exam.subject as Subject].icon}
+                          <div className={`w-12 h-12 ${isEssayItem ? 'bg-gradient-fire' : subjInfo?.color} rounded-xl flex items-center justify-center text-white text-2xl shrink-0 group-hover:scale-110 transition-transform`}>
+                             {isEssayItem ? '✍️' : subjInfo?.icon}
                           </div>
                           <div className="min-w-0">
-                             <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">
-                               {isEssayItem ? `Redação: ${exam.title || 'Sem título'}` : (exam.title || `Simulado ${subjectsInfo[exam.subject as Subject]?.name || ''}`)}
+                             {/* Badge da disciplina */}
+                             {!isEssayItem && subjInfo && (
+                               <span className={`inline-flex items-center gap-1 ${subjInfo.color} text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full mb-1`}>
+                                 {subjInfo.icon} {subjInfo.name}
+                               </span>
+                             )}
+                             {isEssayItem && (
+                               <span className="inline-flex items-center gap-1 bg-gradient-fire text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full mb-1">
+                                 ✍️ Redação
+                               </span>
+                             )}
+                             <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm leading-tight">
+                               {isEssayItem
+                                 ? (exam.title || 'Redação')
+                                 : (exam.title || `Simulado ${subjInfo?.name || ''} — ${exam.bimester}º Bimestre`)}
                              </h4>
-                             <p className="text-[10px] font-black text-slate-400 uppercase">
-                               {isEssayItem ? '✍️ Redação · ' : '🎯 Simulado · '}{exam.bimester}º Bimestre · {exam.school_class || 'Todas turmas'}
+                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
+                               {exam.bimester}º Bimestre · {exam.school_class || 'Todas turmas'}
                              </p>
+                             {exam.expires_at && (() => {
+                               const exp = new Date(exam.expires_at);
+                               const diffMs = exp.getTime() - now.getTime();
+                               const diffH = Math.floor(diffMs / 3600000);
+                               const diffD = Math.floor(diffMs / 86400000);
+                               const urgentColor = diffH < 24 ? 'text-red-500' : diffH < 72 ? 'text-amber-500' : 'text-slate-400';
+                               const label = diffH < 1
+                                 ? `⏰ Menos de 1h`
+                                 : diffH < 24
+                                 ? `⏰ ${diffH}h restantes`
+                                 : `⏰ Prazo: ${exp.toLocaleDateString('pt-BR')} às ${exp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+                               return <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${urgentColor}`}>{label}</p>;
+                             })()}
                           </div>
                        </div>
                        <ChevronRight className="text-amber-200 dark:text-amber-800 group-hover:text-vibe-pink group-hover:translate-x-1 transition-all shrink-0" />
