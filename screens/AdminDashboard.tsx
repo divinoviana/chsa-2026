@@ -341,6 +341,7 @@ export const AdminDashboard: React.FC = () => {
   const [essayBimester, setEssayBimester] = useState('1');
   const [essayClass, setEssayClass] = useState('all');
   const [essayInstructions, setEssayInstructions] = useState('');
+  const [essayExpiresAt, setEssayExpiresAt] = useState('');
   const [isPublishingEssay, setIsPublishingEssay] = useState(false);
   const [publishedEssays, setPublishedEssays] = useState<any[]>([]);
   
@@ -1174,6 +1175,7 @@ export const AdminDashboard: React.FC = () => {
         school_class: schoolClassSingle,
         school_classes: schoolClassesArray,
         topics: [],
+        expires_at: essayExpiresAt ? new Date(essayExpiresAt).toISOString() : null,
         // Pra reusar a infra do simulado, guardamos a redação como
         // uma única "questão" do tipo essay com o título no enunciado.
         questions: [{
@@ -1205,6 +1207,7 @@ export const AdminDashboard: React.FC = () => {
       alert('Redação publicada! Os alunos já podem fazer.');
       setEssayTitle('');
       setEssayInstructions('');
+      setEssayExpiresAt('');
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar redação: ' + (e?.message || ''));
@@ -3106,6 +3109,19 @@ export const AdminDashboard: React.FC = () => {
                       onChange={setEssayTarget}
                     />
 
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega (opcional)</label>
+                      <input
+                        type="datetime-local"
+                        value={essayExpiresAt}
+                        onChange={e => setEssayExpiresAt(e.target.value)}
+                        className="w-full border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-3 text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-orange-100"
+                      />
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
+                        Após o prazo, a redação fica bloqueada para os alunos.
+                      </p>
+                    </div>
+
                     <button
                       onClick={handlePublishEssay}
                       disabled={isPublishingEssay || !essayTitle.trim()}
@@ -3145,6 +3161,12 @@ export const AdminDashboard: React.FC = () => {
                               {es.bimester}º Bimestre · {es.grade}ª Série · {es.school_class || 'Todas as turmas'}
                               {es.created_at && ` · ${new Date(es.created_at).toLocaleDateString('pt-BR')}`}
                             </p>
+                            {es.expires_at && (() => {
+                              const expired = new Date(es.expires_at) < new Date();
+                              return <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
+                                {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(es.expires_at).toLocaleString('pt-BR')}
+                              </p>;
+                            })()}
                           </div>
                         </div>
                         <button
