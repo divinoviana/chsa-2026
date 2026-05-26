@@ -22,6 +22,7 @@ export const LessonView: React.FC = () => {
   const [lessonActivity, setLessonActivity] = useState<LessonActivity | null>(null);
   const [lessonOverride, setLessonOverride] = useState<any>(null);
   const [isActivityLoading, setIsActivityLoading] = useState(false);
+  const [activityExpiresAt, setActivityExpiresAt] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
@@ -73,6 +74,8 @@ export const LessonView: React.FC = () => {
           return;
         }
         const actData = actRows[0] as any;
+
+        if (actData.expires_at) setActivityExpiresAt(actData.expires_at);
 
         // 2. Questões da atividade
         // Suporta dois modelos: questions.lesson_id (legado) ou activities.question_ids (jsonb)
@@ -329,6 +332,19 @@ export const LessonView: React.FC = () => {
                  <Loader2 className="animate-spin text-tocantins-blue dark:text-tocantins-yellow" size={32}/>
                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Buscando questões no banco...</p>
               </div>
+            ) : activityExpiresAt && new Date(activityExpiresAt) < new Date() ? (
+              <div className="relative overflow-hidden bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-800 dark:to-slate-700 p-1 rounded-[40px] animate-in fade-in">
+                <div className="bg-white dark:bg-slate-900 p-12 rounded-[36px] text-center">
+                  <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-5">
+                    <CheckCircle2 className="text-slate-400" size={36} />
+                  </div>
+                  <h4 className="text-2xl font-black tracking-tighter font-display mb-2 text-slate-500">🔒 Prazo Encerrado</h4>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs font-bold tracking-wide">
+                    O prazo para esta atividade foi encerrado em{' '}
+                    {new Date(activityExpiresAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}.
+                  </p>
+                </div>
+              </div>
             ) : lessonActivity ? (
               <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 
@@ -427,7 +443,7 @@ export const LessonView: React.FC = () => {
         </div>
       </div>
 
-      {student && (
+      {student && !(activityExpiresAt && new Date(activityExpiresAt) < new Date()) && (
         <SubmissionBar
           studentName={student.name}
           schoolClass={student.school_class}

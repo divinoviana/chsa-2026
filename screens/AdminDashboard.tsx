@@ -293,6 +293,7 @@ export const AdminDashboard: React.FC = () => {
   const [examClass, setExamClass] = useState('all');
   const [examTopics, setExamTopics] = useState('');
   const [examTitle, setExamTitle] = useState('');
+  const [examExpiresAt, setExamExpiresAt] = useState('');
   const [examQuestionsDraft, setExamQuestionsDraft] = useState<any[]>([]);
   const [examNewQuestion, setExamNewQuestion] = useState<any>({
     type: 'objective',
@@ -308,6 +309,7 @@ export const AdminDashboard: React.FC = () => {
   const [publishedExams, setPublishedExams] = useState<any[]>([]);
   const [editingPublishedExam, setEditingPublishedExam] = useState<any | null>(null);
   const [editExamTitle, setEditExamTitle] = useState('');
+  const [editExamExpiresAt, setEditExamExpiresAt] = useState('');
   const [editExamQuestions, setEditExamQuestions] = useState<any[]>([]);
   const [isSavingEditedExam, setIsSavingEditedExam] = useState(false);
 
@@ -324,6 +326,7 @@ export const AdminDashboard: React.FC = () => {
   const [examTarget, setExamTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [essayTarget, setEssayTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [activityTarget, setActivityTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
+  const [activityExpiresAt, setActivityExpiresAt] = useState('');
 
   // ── Banco de Temas ─────────────────────────────
   const [bankSelectedSubject, setBankSelectedSubject] = useState<string | null>(null);
@@ -805,16 +808,19 @@ export const AdminDashboard: React.FC = () => {
     setSelectedLessonForEdit({ ...lesson, title: displayTitle });
     setIsActivityEditorOpen(true);
     setActivityQuestionsDraft([]);
+    setActivityExpiresAt('');
 
     try {
-      const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('topic', displayTitle)
-        .eq('subject', lesson.subject)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      setActivityQuestionsDraft(data || []);
+      const [qRes, actRes] = await Promise.all([
+        supabase.from('questions').select('*').eq('topic', displayTitle).eq('subject', lesson.subject).order('created_at', { ascending: true }),
+        supabase.from('activities').select('expires_at').eq('lesson_id', lesson.id).maybeSingle(),
+      ]);
+      if (qRes.error) throw qRes.error;
+      setActivityQuestionsDraft(qRes.data || []);
+      if (actRes.data?.expires_at) {
+        const d = new Date(actRes.data.expires_at);
+        setActivityExpiresAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+      }
     } catch (e) {
       console.error("Erro ao carregar questões existentes:", e);
     }
@@ -863,6 +869,7 @@ export const AdminDashboard: React.FC = () => {
         // Tanto turma única quanto várias turmas vão pro mesmo campo.
         if (activityTarget.mode === 'single' && activityTarget.classes[0]) actPayload.school_classes = [activityTarget.classes[0]];
         if (activityTarget.mode === 'multi' && activityTarget.classes.length > 0) actPayload.school_classes = activityTarget.classes;
+        if (activityExpiresAt) actPayload.expires_at = new Date(activityExpiresAt).toISOString();
         // tolerante a schema sem essas colunas
         let lastErr: any = null;
         for (let i = 0; i < 4; i++) {
@@ -1317,6 +1324,7 @@ export const AdminDashboard: React.FC = () => {
         school_classes: schoolClassesArray,
         topics: examTopics.split(',').map(t => t.trim()).filter(Boolean),
         questions: examQuestionsDraft,
+        expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1354,6 +1362,7 @@ export const AdminDashboard: React.FC = () => {
       setExamQuestionsDraft([]);
       setExamTitle('');
       setExamTopics('');
+      setExamExpiresAt('');
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar: ' + (e?.message || ''));
@@ -1378,6 +1387,15 @@ export const AdminDashboard: React.FC = () => {
     setEditingPublishedExam(exam);
     setEditExamTitle(exam.title || '');
     setEditExamQuestions(JSON.parse(JSON.stringify(exam.questions || [])));
+    // Converte ISO para formato datetime-local (YYYY-MM-DDTHH:mm)
+    if (exam.expires_at) {
+      const d = new Date(exam.expires_at);
+      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+        .toISOString().slice(0, 16);
+      setEditExamExpiresAt(local);
+    } else {
+      setEditExamExpiresAt('');
+    }
   };
 
   const handleSaveEditedExam = async () => {
@@ -1386,7 +1404,11 @@ export const AdminDashboard: React.FC = () => {
     try {
       const { error } = await supabase
         .from('bimonthly_exams')
-        .update({ title: editExamTitle.trim(), questions: editExamQuestions })
+        .update({
+          title: editExamTitle.trim(),
+          questions: editExamQuestions,
+          expires_at: editExamExpiresAt ? new Date(editExamExpiresAt).toISOString() : null,
+        })
         .eq('id', editingPublishedExam.id);
       if (error) throw error;
       setEditingPublishedExam(null);
@@ -2807,6 +2829,23 @@ export const AdminDashboard: React.FC = () => {
                     onChange={setExamTarget}
                   />
 
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">
+                      ⏰ Prazo de entrega (opcional — deixe em branco para sem prazo)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={examExpiresAt}
+                      onChange={e => setExamExpiresAt(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
+                    />
+                    {examExpiresAt && (
+                      <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 ml-1">
+                        Alunos não poderão responder após {new Date(examExpiresAt).toLocaleString('pt-BR')}.
+                      </p>
+                    )}
+                  </div>
+
                   <button
                     onClick={handleGenerateExam}
                     disabled={isGeneratingExam}
@@ -2973,6 +3012,14 @@ export const AdminDashboard: React.FC = () => {
                               {exam.bimester}º Bimestre • {exam.grade}ª Série • {exam.school_class || 'Todas as turmas'} • {(exam.questions?.length || 0)} questões
                               {exam.created_at && ` • ${new Date(exam.created_at).toLocaleDateString('pt-BR')}`}
                             </p>
+                            {exam.expires_at && (() => {
+                              const expired = new Date(exam.expires_at) < new Date();
+                              return (
+                                <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
+                                  {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(exam.expires_at).toLocaleString('pt-BR')}
+                                </p>
+                              );
+                            })()}
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
@@ -3530,15 +3577,27 @@ export const AdminDashboard: React.FC = () => {
                  <div className="space-y-6 bg-slate-50/50 dark:bg-slate-800/30 p-8 rounded-[32px] border dark:border-slate-800 self-start">
                     {/* Seletor de turmas-alvo da atividade (só pra atividade nova; depois de criada o vínculo já existe) */}
                     {!savedActivities.includes(selectedLessonForEdit?.id) && (
-                      <div className="pb-4 mb-2 border-b border-dashed dark:border-slate-700">
+                      <div className="pb-4 mb-2 border-b border-dashed dark:border-slate-700 space-y-4">
                         <TargetClassPicker
                           availableClasses={classesForGrade(String(selectedLessonForEdit?.id?.charAt(0) || ''))}
                           value={activityTarget}
                           onChange={setActivityTarget}
                         />
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-2 ml-2 italic">
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
                           A segmentação se aplica quando a primeira questão for adicionada.
                         </p>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega (opcional)</label>
+                          <input
+                            type="datetime-local"
+                            value={activityExpiresAt}
+                            onChange={e => setActivityExpiresAt(e.target.value)}
+                            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-tocantins-blue/50"
+                          />
+                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
+                            Após o prazo, a atividade fica bloqueada para os alunos.
+                          </p>
+                        </div>
                       </div>
                     )}
                     <h4 className="text-[10px] font-black text-tocantins-blue dark:text-tocantins-yellow uppercase tracking-widest flex items-center gap-2">
@@ -3602,7 +3661,7 @@ export const AdminDashboard: React.FC = () => {
                          </div>
                        )}
 
-                       <button 
+                       <button
                          onClick={handleAddQuestionToDraft}
                          disabled={isSavingActivity || !newQuestion.question_text.trim()}
                          className="w-full mt-4 bg-tocantins-blue dark:bg-tocantins-yellow text-white dark:text-slate-950 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-500/20 dark:shadow-none hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
@@ -3610,6 +3669,32 @@ export const AdminDashboard: React.FC = () => {
                          {isSavingActivity ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>}
                          Adicionar Questão ao Banco
                        </button>
+
+                       {/* Prazo de entrega para atividade existente */}
+                       {savedActivities.includes(selectedLessonForEdit?.id) && (
+                         <div className="mt-4 pt-4 border-t border-dashed dark:border-slate-700 space-y-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega</label>
+                           <input
+                             type="datetime-local"
+                             value={activityExpiresAt}
+                             onChange={e => setActivityExpiresAt(e.target.value)}
+                             className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-tocantins-blue/50"
+                           />
+                           <button
+                             onClick={async () => {
+                               try {
+                                 await supabase.from('activities').update({
+                                   expires_at: activityExpiresAt ? new Date(activityExpiresAt).toISOString() : null,
+                                 }).eq('lesson_id', selectedLessonForEdit.id);
+                                 alert('Prazo salvo com sucesso!');
+                               } catch(e: any) { alert('Erro ao salvar prazo: ' + e.message); }
+                             }}
+                             className="w-full bg-slate-900 dark:bg-slate-700 text-white py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                           >
+                             <Save size={14}/> Salvar Prazo
+                           </button>
+                         </div>
+                       )}
                     </div>
                  </div>
               </div>
@@ -4173,6 +4258,25 @@ export const AdminDashboard: React.FC = () => {
                 onChange={e => setEditExamTitle(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
               />
+            </div>
+
+            {/* Prazo */}
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">⏰ Prazo de entrega (deixe em branco = sem prazo)</label>
+              <input
+                type="datetime-local"
+                value={editExamExpiresAt}
+                onChange={e => setEditExamExpiresAt(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+              />
+              {editExamExpiresAt && (
+                <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1 ml-1">
+                  Encerra em {new Date(editExamExpiresAt).toLocaleString('pt-BR')}
+                </p>
+              )}
+              {!editExamExpiresAt && editingPublishedExam?.expires_at && (
+                <p className="text-[10px] font-bold text-red-500 mt-1 ml-1">Prazo anterior removido — sem prazo ao salvar.</p>
+              )}
             </div>
 
             {/* Questões */}

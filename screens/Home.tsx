@@ -203,7 +203,10 @@ export const Home: React.FC = () => {
   // Funciona tanto para simulados quanto para redações:
   //   - redação:  lesson_title = "Redação: <título>"
   //   - simulado: lesson_title = "Avaliação Bimestral: Xº Bimestre" (ou customizado)
+  const now = new Date();
   const pendingExams = exams.filter(e => {
+    // Prazo encerrado — não mostra mais para o aluno
+    if (e.expires_at && new Date(e.expires_at) < now) return false;
     // Verifica primeiro por ID (mais confiável — não depende de correspondência de string)
     if (finishedExamIds.has(e.id)) return false;
     // Fallback por título (para submissões antigas sem lesson_id preenchido)
@@ -350,6 +353,19 @@ export const Home: React.FC = () => {
                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
                                {exam.bimester}º Bimestre · {exam.school_class || 'Todas turmas'}
                              </p>
+                             {exam.expires_at && (() => {
+                               const exp = new Date(exam.expires_at);
+                               const diffMs = exp.getTime() - now.getTime();
+                               const diffH = Math.floor(diffMs / 3600000);
+                               const diffD = Math.floor(diffMs / 86400000);
+                               const urgentColor = diffH < 24 ? 'text-red-500' : diffH < 72 ? 'text-amber-500' : 'text-slate-400';
+                               const label = diffH < 1
+                                 ? `⏰ Menos de 1h`
+                                 : diffH < 24
+                                 ? `⏰ ${diffH}h restantes`
+                                 : `⏰ Prazo: ${exp.toLocaleDateString('pt-BR')} às ${exp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+                               return <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${urgentColor}`}>{label}</p>;
+                             })()}
                           </div>
                        </div>
                        <ChevronRight className="text-amber-200 dark:text-amber-800 group-hover:text-vibe-pink group-hover:translate-x-1 transition-all shrink-0" />
