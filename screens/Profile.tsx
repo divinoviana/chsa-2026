@@ -89,26 +89,28 @@ export const Profile: React.FC = () => {
     if (!newPhoto || !student) return;
     setLoading(true);
     try {
-      const profileData: any = {
-        id: student.id,
-        photo_url: newPhoto,
-      };
+      let error: any;
 
-      // Para admins/professores sem perfil completo de aluno, populamos os requisitos mínimos
       if (!student.grade || !student.school_class) {
-        profileData.name = student.name || 'Usuário';
-        profileData.email = student.email || '';
-        profileData.role = 'admin';
-        profileData.grade = student.grade || 'N/A';
-        profileData.school_class = student.school_class || 'N/A';
+        // Admin sem perfil completo: upsert com todos os campos obrigatórios
+        const profileData: any = {
+          id: student.id,
+          photo_url: newPhoto,
+          name: student.name || 'Usuário',
+          email: student.email || '',
+          role: 'admin',
+          grade: student.grade || 'N/A',
+          school_class: student.school_class || 'N/A',
+        };
+        ({ error } = await supabase.from('students').upsert(profileData, { onConflict: 'id' }));
+      } else {
+        // Aluno comum: UPDATE simples, a linha já existe
+        ({ error } = await supabase.from('students').update({ photo_url: newPhoto }).eq('id', student.id));
       }
 
-      const { error } = await supabase
-        .from('students')
-        .upsert(profileData, { onConflict: 'id' });
       if (error) throw error;
 
-      updateStudentData(profileData);
+      updateStudentData({ photo_url: newPhoto });
       alert("Foto atualizada com sucesso!");
       setNewPhoto(null);
     } catch (err: any) {
