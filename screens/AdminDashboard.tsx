@@ -342,6 +342,8 @@ export const AdminDashboard: React.FC = () => {
   const [essayClass, setEssayClass] = useState('all');
   const [essayInstructions, setEssayInstructions] = useState('');
   const [essayExpiresAt, setEssayExpiresAt] = useState('');
+  const [editingEssayDeadline, setEditingEssayDeadline] = useState<string | null>(null);
+  const [essayDeadlineDraft, setEssayDeadlineDraft] = useState('');
   const [isPublishingEssay, setIsPublishingEssay] = useState(false);
   const [publishedEssays, setPublishedEssays] = useState<any[]>([]);
   
@@ -3150,32 +3152,85 @@ export const AdminDashboard: React.FC = () => {
                   </h3>
                   <div className="space-y-3">
                     {publishedEssays.map((es: any) => (
-                      <div key={es.id} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="w-11 h-11 bg-gradient-fire rounded-xl flex items-center justify-center text-white shadow-md shrink-0">
-                            <Pencil size={18}/>
+                      <div key={es.id} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="w-11 h-11 bg-gradient-fire rounded-xl flex items-center justify-center text-white shadow-md shrink-0">
+                              <Pencil size={18}/>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-black text-slate-800 dark:text-slate-100 text-sm truncate">{es.title}</p>
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
+                                {es.bimester}º Bimestre · {es.grade}ª Série · {es.school_class || 'Todas as turmas'}
+                                {es.created_at && ` · ${new Date(es.created_at).toLocaleDateString('pt-BR')}`}
+                              </p>
+                              {es.expires_at && editingEssayDeadline !== es.id && (() => {
+                                const expired = new Date(es.expires_at) < new Date();
+                                return <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
+                                  {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(es.expires_at).toLocaleString('pt-BR')}
+                                </p>;
+                              })()}
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <p className="font-black text-slate-800 dark:text-slate-100 text-sm truncate">{es.title}</p>
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
-                              {es.bimester}º Bimestre · {es.grade}ª Série · {es.school_class || 'Todas as turmas'}
-                              {es.created_at && ` · ${new Date(es.created_at).toLocaleDateString('pt-BR')}`}
-                            </p>
-                            {es.expires_at && (() => {
-                              const expired = new Date(es.expires_at) < new Date();
-                              return <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
-                                {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(es.expires_at).toLocaleString('pt-BR')}
-                              </p>;
-                            })()}
+                          <div className="flex gap-1 shrink-0">
+                            <button
+                              onClick={() => {
+                                if (editingEssayDeadline === es.id) {
+                                  setEditingEssayDeadline(null);
+                                } else {
+                                  const val = es.expires_at
+                                    ? (() => { const d = new Date(es.expires_at); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); })()
+                                    : '';
+                                  setEssayDeadlineDraft(val);
+                                  setEditingEssayDeadline(es.id);
+                                }
+                              }}
+                              className="p-2 text-amber-500 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg transition-all"
+                              title="Editar prazo"
+                            >
+                              <Clock size={16}/>
+                            </button>
+                            <button
+                              onClick={() => handleDeletePublishedEssay(es.id)}
+                              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
+                              title="Excluir redação"
+                            >
+                              <Trash2 size={16}/>
+                            </button>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeletePublishedEssay(es.id)}
-                          className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
-                          title="Excluir redação"
-                        >
-                          <Trash2 size={16}/>
-                        </button>
+
+                        {editingEssayDeadline === es.id && (
+                          <div className="flex items-center gap-2 pt-1">
+                            <input
+                              type="datetime-local"
+                              value={essayDeadlineDraft}
+                              onChange={e => setEssayDeadlineDraft(e.target.value)}
+                              className="flex-1 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                            />
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const { error } = await supabase.from('bimonthly_exams').update({
+                                    expires_at: essayDeadlineDraft ? new Date(essayDeadlineDraft).toISOString() : null,
+                                  }).eq('id', es.id);
+                                  if (error) throw error;
+                                  setEditingEssayDeadline(null);
+                                  fetchPublishedExams();
+                                } catch (e: any) { alert('Erro ao salvar prazo: ' + e.message); }
+                              }}
+                              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                            >
+                              Salvar
+                            </button>
+                            <button
+                              onClick={() => setEditingEssayDeadline(null)}
+                              className="px-3 py-2 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
