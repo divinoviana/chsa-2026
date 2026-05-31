@@ -295,6 +295,7 @@ export const AdminDashboard: React.FC = () => {
   const [examTitle, setExamTitle] = useState('');
   const [examExpiresAt, setExamExpiresAt] = useState('');
   const [examStartsAt, setExamStartsAt] = useState('');
+  const [examHidden, setExamHidden] = useState(false);
   const [examQuestionsDraft, setExamQuestionsDraft] = useState<any[]>([]);
   const [examNewQuestion, setExamNewQuestion] = useState<any>({
     type: 'objective',
@@ -346,6 +347,7 @@ export const AdminDashboard: React.FC = () => {
   const [essayInstructions, setEssayInstructions] = useState('');
   const [essayExpiresAt, setEssayExpiresAt] = useState('');
   const [essayStartsAt, setEssayStartsAt] = useState('');
+  const [essayHidden, setEssayHidden] = useState(false);
   const [editingEssayDeadline, setEditingEssayDeadline] = useState<string | null>(null);
   const [essayDeadlineDraft, setEssayDeadlineDraft] = useState('');
   const [isPublishingEssay, setIsPublishingEssay] = useState(false);
@@ -1183,7 +1185,7 @@ export const AdminDashboard: React.FC = () => {
         school_classes: schoolClassesArray,
         topics: [],
         expires_at: essayExpiresAt ? new Date(essayExpiresAt).toISOString() : null,
-        starts_at: essayStartsAt ? new Date(essayStartsAt).toISOString() : null,
+        starts_at: essayHidden ? '2099-01-01T00:00:00Z' : (essayStartsAt ? new Date(essayStartsAt).toISOString() : null),
         // Pra reusar a infra do simulado, guardamos a redação como
         // uma única "questão" do tipo essay com o título no enunciado.
         questions: [{
@@ -1217,6 +1219,7 @@ export const AdminDashboard: React.FC = () => {
       setEssayInstructions('');
       setEssayExpiresAt('');
       setEssayStartsAt('');
+      setEssayHidden(false);
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar redação: ' + (e?.message || ''));
@@ -1337,7 +1340,7 @@ export const AdminDashboard: React.FC = () => {
         topics: examTopics.split(',').map(t => t.trim()).filter(Boolean),
         questions: examQuestionsDraft,
         expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
-        starts_at: examStartsAt ? new Date(examStartsAt).toISOString() : null,
+        starts_at: examHidden ? '2099-01-01T00:00:00Z' : (examStartsAt ? new Date(examStartsAt).toISOString() : null),
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1377,6 +1380,7 @@ export const AdminDashboard: React.FC = () => {
       setExamTopics('');
       setExamExpiresAt('');
       setExamStartsAt('');
+      setExamHidden(false);
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar: ' + (e?.message || ''));
@@ -2883,6 +2887,20 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Toggle: criar oculto */}
+                  <button
+                    type="button"
+                    onClick={() => setExamHidden(h => !h)}
+                    className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl border-2 transition-all ${examHidden ? 'border-slate-700 bg-slate-900 text-white' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
+                  >
+                    <span className="text-[11px] font-black uppercase tracking-widest">
+                      {examHidden ? '🙈 Criar oculto — liberar manualmente por turma' : '👁 Criar visível imediatamente'}
+                    </span>
+                    <span className={`w-10 h-6 rounded-full transition-all flex items-center px-1 ${examHidden ? 'bg-vibe-purple' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                      <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${examHidden ? 'translate-x-4' : 'translate-x-0'}`}/>
+                    </span>
+                  </button>
+
                   <button
                     onClick={handleGenerateExam}
                     disabled={isGeneratingExam}
@@ -3035,48 +3053,70 @@ export const AdminDashboard: React.FC = () => {
                     <Library size={16}/> Simulados Publicados ({publishedExams.length})
                   </h3>
                   <div className="space-y-3">
-                    {publishedExams.map((exam: any) => (
-                      <div key={exam.id} className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4 flex-1 min-w-0">
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-md ${subjectsInfo[exam.subject as Subject]?.color || 'bg-slate-500'}`}>
-                            <Award size={20}/>
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">
-                              {exam.title || `Simulado ${subjectsInfo[exam.subject as Subject]?.name || exam.subject}`}
-                            </p>
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                              {exam.bimester}º Bimestre • {exam.grade}ª Série • {exam.school_class || 'Todas as turmas'} • {(exam.questions?.length || 0)} questões
-                              {exam.created_at && ` • ${new Date(exam.created_at).toLocaleDateString('pt-BR')}`}
-                            </p>
-                            {exam.expires_at && (() => {
-                              const expired = new Date(exam.expires_at) < new Date();
-                              return (
-                                <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
-                                  {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(exam.expires_at).toLocaleString('pt-BR')}
+                    {publishedExams.map((exam: any) => {
+                      const isHidden = exam.starts_at && new Date(exam.starts_at) > new Date();
+                      const isExpired = exam.expires_at && new Date(exam.expires_at) < new Date();
+                      return (
+                        <div key={exam.id} className={`p-5 rounded-2xl border transition-all ${isHidden ? 'bg-slate-900/5 dark:bg-slate-800/80 border-slate-300 dark:border-slate-600' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800'}`}>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                              <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-md ${isHidden ? 'bg-slate-400 dark:bg-slate-600' : subjectsInfo[exam.subject as Subject]?.color || 'bg-slate-500'}`}>
+                                {isHidden ? <span className="text-lg">🙈</span> : <Award size={20}/>}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">
+                                  {exam.title || `Simulado ${subjectsInfo[exam.subject as Subject]?.name || exam.subject}`}
                                 </p>
-                              );
-                            })()}
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                  {exam.bimester}º Bimestre • {exam.grade}ª Série • {exam.school_class || 'Todas as turmas'} • {(exam.questions?.length || 0)} questões
+                                </p>
+                                {isHidden && (
+                                  <p className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mt-0.5">🙈 Oculto — aguardando liberação</p>
+                                )}
+                                {!isHidden && !isExpired && (
+                                  <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5">🟢 Disponível para alunos</p>
+                                )}
+                                {isExpired && (
+                                  <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mt-0.5">🔒 Prazo encerrado</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isHidden && (
+                                <button
+                                  onClick={async () => {
+                                    await supabase.from('bimonthly_exams').update({ starts_at: new Date().toISOString() }).eq('id', exam.id);
+                                    fetchPublishedExams();
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md"
+                                  title="Liberar agora para os alunos"
+                                >
+                                  ▶ Liberar agora
+                                </button>
+                              )}
+                              {!isHidden && !isExpired && (
+                                <button
+                                  onClick={async () => {
+                                    await supabase.from('bimonthly_exams').update({ starts_at: '2099-01-01T00:00:00Z' }).eq('id', exam.id);
+                                    fetchPublishedExams();
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                                  title="Ocultar para os alunos"
+                                >
+                                  ⏸ Ocultar
+                                </button>
+                              )}
+                              <button onClick={() => openEditPublishedExam(exam)} className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all" title="Editar simulado">
+                                <Pencil size={16}/>
+                              </button>
+                              <button onClick={() => handleDeletePublishedExam(exam.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all" title="Excluir simulado">
+                                <Trash2 size={16}/>
+                              </button>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => openEditPublishedExam(exam)}
-                            className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
-                            title="Editar simulado"
-                          >
-                            <Pencil size={16}/>
-                          </button>
-                          <button
-                            onClick={() => handleDeletePublishedExam(exam.id)}
-                            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
-                            title="Excluir simulado"
-                          >
-                            <Trash2 size={16}/>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -3172,6 +3212,20 @@ export const AdminDashboard: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Toggle: criar oculto */}
+                    <button
+                      type="button"
+                      onClick={() => setEssayHidden(h => !h)}
+                      className={`w-full flex items-center justify-between px-5 py-4 rounded-2xl border-2 transition-all ${essayHidden ? 'border-slate-700 bg-slate-900 text-white' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
+                    >
+                      <span className="text-[11px] font-black uppercase tracking-widest">
+                        {essayHidden ? '🙈 Criar oculta — liberar manualmente por turma' : '👁 Criar visível imediatamente'}
+                      </span>
+                      <span className={`w-10 h-6 rounded-full transition-all flex items-center px-1 ${essayHidden ? 'bg-vibe-orange' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                        <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${essayHidden ? 'translate-x-4' : 'translate-x-0'}`}/>
+                      </span>
+                    </button>
+
                     <button
                       onClick={handlePublishEssay}
                       disabled={isPublishingEssay || !essayTitle.trim()}
@@ -3199,28 +3253,56 @@ export const AdminDashboard: React.FC = () => {
                     <Library size={16} className="text-vibe-orange"/> Redações Publicadas ({publishedEssays.length})
                   </h3>
                   <div className="space-y-3">
-                    {publishedEssays.map((es: any) => (
-                      <div key={es.id} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
+                    {publishedEssays.map((es: any) => {
+                      const isHiddenEssay = es.starts_at && new Date(es.starts_at) > new Date();
+                      const isExpiredEssay = es.expires_at && new Date(es.expires_at) < new Date();
+                      return (
+                      <div key={es.id} className={`p-4 rounded-2xl border space-y-3 transition-all ${isHiddenEssay ? 'bg-slate-900/5 dark:bg-slate-800/80 border-slate-300 dark:border-slate-600' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800'}`}>
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <div className="w-11 h-11 bg-gradient-fire rounded-xl flex items-center justify-center text-white shadow-md shrink-0">
-                              <Pencil size={18}/>
+                            <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-white shadow-md shrink-0 ${isHiddenEssay ? 'bg-slate-400 dark:bg-slate-600' : 'bg-gradient-fire'}`}>
+                              {isHiddenEssay ? <span>🙈</span> : <Pencil size={18}/>}
                             </div>
                             <div className="min-w-0">
                               <p className="font-black text-slate-800 dark:text-slate-100 text-sm truncate">{es.title}</p>
                               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">
                                 {es.bimester}º Bimestre · {es.grade}ª Série · {es.school_class || 'Todas as turmas'}
-                                {es.created_at && ` · ${new Date(es.created_at).toLocaleDateString('pt-BR')}`}
                               </p>
-                              {es.expires_at && editingEssayDeadline !== es.id && (() => {
-                                const expired = new Date(es.expires_at) < new Date();
-                                return <p className={`text-[9px] font-black uppercase tracking-widest mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
-                                  {expired ? '🔒 Prazo encerrado' : '⏰ Prazo:'} {new Date(es.expires_at).toLocaleString('pt-BR')}
-                                </p>;
-                              })()}
+                              {isHiddenEssay && <p className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mt-0.5">🙈 Oculta — aguardando liberação</p>}
+                              {!isHiddenEssay && !isExpiredEssay && <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5">🟢 Disponível para alunos</p>}
+                              {isExpiredEssay && <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mt-0.5">🔒 Prazo encerrado</p>}
+                              {es.expires_at && !isExpiredEssay && editingEssayDeadline !== es.id && (
+                                <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mt-0.5">
+                                  ⏰ Prazo: {new Date(es.expires_at).toLocaleString('pt-BR')}
+                                </p>
+                              )}
                             </div>
                           </div>
-                          <div className="flex gap-1 shrink-0">
+                          <div className="flex gap-1 shrink-0 flex-wrap justify-end">
+                            {isHiddenEssay && (
+                              <button
+                                onClick={async () => {
+                                  await supabase.from('bimonthly_exams').update({ starts_at: new Date().toISOString() }).eq('id', es.id);
+                                  fetchPublishedExams();
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md"
+                                title="Liberar agora para os alunos"
+                              >
+                                ▶ Liberar agora
+                              </button>
+                            )}
+                            {!isHiddenEssay && !isExpiredEssay && (
+                              <button
+                                onClick={async () => {
+                                  await supabase.from('bimonthly_exams').update({ starts_at: '2099-01-01T00:00:00Z' }).eq('id', es.id);
+                                  fetchPublishedExams();
+                                }}
+                                className="flex items-center gap-1.5 px-2 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                                title="Ocultar para os alunos"
+                              >
+                                ⏸ Ocultar
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 if (editingEssayDeadline === es.id) {
@@ -3280,7 +3362,8 @@ export const AdminDashboard: React.FC = () => {
                           </div>
                         )}
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 </div>
               )}
