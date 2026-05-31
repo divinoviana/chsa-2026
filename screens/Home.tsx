@@ -205,6 +205,8 @@ export const Home: React.FC = () => {
   //   - simulado: lesson_title = "Avaliação Bimestral: Xº Bimestre" (ou customizado)
   const now = new Date();
   const pendingExams = exams.filter(e => {
+    // Ainda não liberado (agendamento futuro)
+    if (e.starts_at && new Date(e.starts_at) > now) return false;
     // Prazo encerrado — não mostra mais para o aluno
     if (e.expires_at && new Date(e.expires_at) < now) return false;
     // Verifica primeiro por ID (mais confiável — não depende de correspondência de string)

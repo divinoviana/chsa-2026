@@ -18,6 +18,7 @@ export const GradeView: React.FC = () => {
   const [userSubmissions, setUserSubmissions] = useState<string[]>([]);
   const [publishedLessonIds, setPublishedLessonIds] = useState<string[]>([]);
   const [activityExpiresMap, setActivityExpiresMap] = useState<Record<string, string>>({});
+  const [activityStartsMap, setActivityStartsMap] = useState<Record<string, string>>({});
   const [lessonTitleOverrides, setLessonTitleOverrides] = useState<Record<string, string>>({});
   const [loadingExams, setLoadingExams] = useState(true);
   
@@ -83,7 +84,7 @@ export const GradeView: React.FC = () => {
         : [];
 
       const [actsRes, qsRes, overridesRes] = await Promise.all([
-        supabase.from('activities').select('lesson_id,school_classes,expires_at'),
+        supabase.from('activities').select('lesson_id,school_classes,expires_at,starts_at'),
         supabase.from('questions').select('lesson_id').eq('subject', subjectKey),
         allLessonIds.length > 0
           ? supabase.from('lesson_overrides').select('id, data').in('id', allLessonIds)
@@ -104,13 +105,19 @@ export const GradeView: React.FC = () => {
       const myClass = String(student.school_class).trim();
       const publishedIds = new Set<string>();
       const expiresMap: Record<string, string> = {};
+      const startsMap: Record<string, string> = {};
+      const nowIso = new Date();
       (actsRes.data || []).forEach((row: any) => {
         if (!row.lesson_id || !lessonIdsWithQuestions.has(row.lesson_id)) return;
         if (!isItemTargetedAtClass(row, myClass)) return;
+        // Não mostra atividades agendadas para o futuro
+        if (row.starts_at && new Date(row.starts_at) > nowIso) return;
         publishedIds.add(row.lesson_id);
         if (row.expires_at) expiresMap[row.lesson_id] = row.expires_at;
+        if (row.starts_at) startsMap[row.lesson_id] = row.starts_at;
       });
       setActivityExpiresMap(expiresMap);
+      setActivityStartsMap(startsMap);
 
       setExams(filteredExams);
       setUserSubmissions(subsKeys);

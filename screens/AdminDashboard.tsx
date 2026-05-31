@@ -294,6 +294,7 @@ export const AdminDashboard: React.FC = () => {
   const [examTopics, setExamTopics] = useState('');
   const [examTitle, setExamTitle] = useState('');
   const [examExpiresAt, setExamExpiresAt] = useState('');
+  const [examStartsAt, setExamStartsAt] = useState('');
   const [examQuestionsDraft, setExamQuestionsDraft] = useState<any[]>([]);
   const [examNewQuestion, setExamNewQuestion] = useState<any>({
     type: 'objective',
@@ -310,6 +311,7 @@ export const AdminDashboard: React.FC = () => {
   const [editingPublishedExam, setEditingPublishedExam] = useState<any | null>(null);
   const [editExamTitle, setEditExamTitle] = useState('');
   const [editExamExpiresAt, setEditExamExpiresAt] = useState('');
+  const [editExamStartsAt, setEditExamStartsAt] = useState('');
   const [editExamQuestions, setEditExamQuestions] = useState<any[]>([]);
   const [isSavingEditedExam, setIsSavingEditedExam] = useState(false);
 
@@ -327,6 +329,7 @@ export const AdminDashboard: React.FC = () => {
   const [essayTarget, setEssayTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [activityTarget, setActivityTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [activityExpiresAt, setActivityExpiresAt] = useState('');
+  const [activityStartsAt, setActivityStartsAt] = useState('');
 
   // ── Banco de Temas ─────────────────────────────
   const [bankSelectedSubject, setBankSelectedSubject] = useState<string | null>(null);
@@ -342,6 +345,7 @@ export const AdminDashboard: React.FC = () => {
   const [essayClass, setEssayClass] = useState('all');
   const [essayInstructions, setEssayInstructions] = useState('');
   const [essayExpiresAt, setEssayExpiresAt] = useState('');
+  const [essayStartsAt, setEssayStartsAt] = useState('');
   const [editingEssayDeadline, setEditingEssayDeadline] = useState<string | null>(null);
   const [essayDeadlineDraft, setEssayDeadlineDraft] = useState('');
   const [isPublishingEssay, setIsPublishingEssay] = useState(false);
@@ -873,6 +877,7 @@ export const AdminDashboard: React.FC = () => {
         if (activityTarget.mode === 'single' && activityTarget.classes[0]) actPayload.school_classes = [activityTarget.classes[0]];
         if (activityTarget.mode === 'multi' && activityTarget.classes.length > 0) actPayload.school_classes = activityTarget.classes;
         if (activityExpiresAt) actPayload.expires_at = new Date(activityExpiresAt).toISOString();
+        if (activityStartsAt) actPayload.starts_at = new Date(activityStartsAt).toISOString();
         // tolerante a schema sem essas colunas
         let lastErr: any = null;
         for (let i = 0; i < 4; i++) {
@@ -1178,6 +1183,7 @@ export const AdminDashboard: React.FC = () => {
         school_classes: schoolClassesArray,
         topics: [],
         expires_at: essayExpiresAt ? new Date(essayExpiresAt).toISOString() : null,
+        starts_at: essayStartsAt ? new Date(essayStartsAt).toISOString() : null,
         // Pra reusar a infra do simulado, guardamos a redação como
         // uma única "questão" do tipo essay com o título no enunciado.
         questions: [{
@@ -1210,6 +1216,7 @@ export const AdminDashboard: React.FC = () => {
       setEssayTitle('');
       setEssayInstructions('');
       setEssayExpiresAt('');
+      setEssayStartsAt('');
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar redação: ' + (e?.message || ''));
@@ -1330,6 +1337,7 @@ export const AdminDashboard: React.FC = () => {
         topics: examTopics.split(',').map(t => t.trim()).filter(Boolean),
         questions: examQuestionsDraft,
         expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
+        starts_at: examStartsAt ? new Date(examStartsAt).toISOString() : null,
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1368,6 +1376,7 @@ export const AdminDashboard: React.FC = () => {
       setExamTitle('');
       setExamTopics('');
       setExamExpiresAt('');
+      setExamStartsAt('');
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar: ' + (e?.message || ''));
@@ -1395,11 +1404,15 @@ export const AdminDashboard: React.FC = () => {
     // Converte ISO para formato datetime-local (YYYY-MM-DDTHH:mm)
     if (exam.expires_at) {
       const d = new Date(exam.expires_at);
-      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-        .toISOString().slice(0, 16);
-      setEditExamExpiresAt(local);
+      setEditExamExpiresAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
     } else {
       setEditExamExpiresAt('');
+    }
+    if (exam.starts_at) {
+      const d = new Date(exam.starts_at);
+      setEditExamStartsAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+    } else {
+      setEditExamStartsAt('');
     }
   };
 
@@ -1413,6 +1426,7 @@ export const AdminDashboard: React.FC = () => {
           title: editExamTitle.trim(),
           questions: editExamQuestions,
           expires_at: editExamExpiresAt ? new Date(editExamExpiresAt).toISOString() : null,
+          starts_at: editExamStartsAt ? new Date(editExamStartsAt).toISOString() : null,
         })
         .eq('id', editingPublishedExam.id);
       if (error) throw error;
@@ -2834,21 +2848,39 @@ export const AdminDashboard: React.FC = () => {
                     onChange={setExamTarget}
                   />
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">
-                      ⏰ Prazo de entrega (opcional — deixe em branco para sem prazo)
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={examExpiresAt}
-                      onChange={e => setExamExpiresAt(e.target.value)}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
-                    />
-                    {examExpiresAt && (
-                      <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 ml-1">
-                        Alunos não poderão responder após {new Date(examExpiresAt).toLocaleString('pt-BR')}.
-                      </p>
-                    )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">
+                        📅 Agendar publicação (opcional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={examStartsAt}
+                        onChange={e => setExamStartsAt(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
+                      />
+                      {examStartsAt && (
+                        <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 ml-1">
+                          Visível para os alunos a partir de {new Date(examStartsAt).toLocaleString('pt-BR')}.
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">
+                        ⏰ Prazo de entrega (opcional)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={examExpiresAt}
+                        onChange={e => setExamExpiresAt(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
+                      />
+                      {examExpiresAt && (
+                        <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 ml-1">
+                          Bloqueado após {new Date(examExpiresAt).toLocaleString('pt-BR')}.
+                        </p>
+                      )}
+                    </div>
                   </div>
 
                   <button
@@ -3111,17 +3143,33 @@ export const AdminDashboard: React.FC = () => {
                       onChange={setEssayTarget}
                     />
 
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega (opcional)</label>
-                      <input
-                        type="datetime-local"
-                        value={essayExpiresAt}
-                        onChange={e => setEssayExpiresAt(e.target.value)}
-                        className="w-full border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-3 text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-orange-100"
-                      />
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
-                        Após o prazo, a redação fica bloqueada para os alunos.
-                      </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">📅 Agendar publicação (opcional)</label>
+                        <input
+                          type="datetime-local"
+                          value={essayStartsAt}
+                          onChange={e => setEssayStartsAt(e.target.value)}
+                          className="w-full border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-3 text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-orange-100"
+                        />
+                        {essayStartsAt && (
+                          <p className="text-[9px] font-bold text-blue-600 uppercase tracking-widest ml-2 italic">
+                            Aparece para alunos a partir de {new Date(essayStartsAt).toLocaleString('pt-BR')}.
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega (opcional)</label>
+                        <input
+                          type="datetime-local"
+                          value={essayExpiresAt}
+                          onChange={e => setEssayExpiresAt(e.target.value)}
+                          className="w-full border border-slate-200 dark:border-slate-700 rounded-2xl px-5 py-3 text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-orange-100"
+                        />
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
+                          Após o prazo, a redação fica bloqueada.
+                        </p>
+                      </div>
                     </div>
 
                     <button
@@ -3663,6 +3711,20 @@ export const AdminDashboard: React.FC = () => {
                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-2 italic">
                           A segmentação se aplica quando a primeira questão for adicionada.
                         </p>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">📅 Agendar publicação (opcional)</label>
+                          <input
+                            type="datetime-local"
+                            value={activityStartsAt}
+                            onChange={e => setActivityStartsAt(e.target.value)}
+                            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-tocantins-blue/50"
+                          />
+                          {activityStartsAt && (
+                            <p className="text-[9px] font-bold text-blue-600 uppercase tracking-widest ml-2 italic">
+                              Visível a partir de {new Date(activityStartsAt).toLocaleString('pt-BR')}.
+                            </p>
+                          )}
+                        </div>
                         <div className="space-y-1">
                           <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">⏰ Prazo de entrega (opcional)</label>
                           <input
@@ -4337,23 +4399,36 @@ export const AdminDashboard: React.FC = () => {
               />
             </div>
 
-            {/* Prazo */}
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">⏰ Prazo de entrega (deixe em branco = sem prazo)</label>
-              <input
-                type="datetime-local"
-                value={editExamExpiresAt}
-                onChange={e => setEditExamExpiresAt(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
-              />
-              {editExamExpiresAt && (
-                <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1 ml-1">
-                  Encerra em {new Date(editExamExpiresAt).toLocaleString('pt-BR')}
-                </p>
-              )}
-              {!editExamExpiresAt && editingPublishedExam?.expires_at && (
-                <p className="text-[10px] font-bold text-red-500 mt-1 ml-1">Prazo anterior removido — sem prazo ao salvar.</p>
-              )}
+            {/* Agendamento + Prazo */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">📅 Agendar publicação (em branco = visível agora)</label>
+                <input
+                  type="datetime-local"
+                  value={editExamStartsAt}
+                  onChange={e => setEditExamStartsAt(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+                />
+                {editExamStartsAt && (
+                  <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 mt-1 ml-1">
+                    Aparece em {new Date(editExamStartsAt).toLocaleString('pt-BR')}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">⏰ Prazo de entrega (em branco = sem prazo)</label>
+                <input
+                  type="datetime-local"
+                  value={editExamExpiresAt}
+                  onChange={e => setEditExamExpiresAt(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+                />
+                {editExamExpiresAt && (
+                  <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1 ml-1">
+                    Encerra em {new Date(editExamExpiresAt).toLocaleString('pt-BR')}
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Questões */}

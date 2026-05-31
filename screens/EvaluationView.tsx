@@ -281,6 +281,13 @@ export const EvaluationView: React.FC = () => {
       }
       setExam(examData);
 
+      // Verifica agendamento — ainda não disponível
+      if (examData.starts_at && new Date(examData.starts_at) > new Date()) {
+        alert('📅 Esta avaliação ainda não está disponível. Volte em ' + new Date(examData.starts_at).toLocaleString('pt-BR') + '.');
+        navigate('/');
+        return;
+      }
+
       // Verifica prazo de entrega
       if (examData.expires_at && new Date(examData.expires_at) < new Date()) {
         alert('⏰ O prazo para esta avaliação foi encerrado. Você não pode mais realizá-la.');

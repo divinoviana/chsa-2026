@@ -75,6 +75,11 @@ export const LessonView: React.FC = () => {
         }
         const actData = actRows[0] as any;
 
+        if (actData.starts_at && new Date(actData.starts_at) > new Date()) {
+          alert('📅 Esta atividade ainda não está disponível. Volte em ' + new Date(actData.starts_at).toLocaleString('pt-BR') + '.');
+          navigate('/');
+          return;
+        }
         if (actData.expires_at) setActivityExpiresAt(actData.expires_at);
 
         // 2. Questões da atividade
