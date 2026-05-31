@@ -281,8 +281,24 @@ export const EvaluationView: React.FC = () => {
       }
       setExam(examData);
 
-      // Verifica agendamento — ainda não disponível
-      if (examData.starts_at && new Date(examData.starts_at) > new Date()) {
+      // Verifica liberação por turma (tem precedência sobre starts_at global)
+      const releases = examData.class_releases || {};
+      const myClass = student.school_class ? String(student.school_class).trim() : '';
+      if (Object.keys(releases).length > 0) {
+        const myRelease = releases[myClass];
+        const hiddenSentinel = '2099-01-01T00:00:00Z';
+        if (myRelease == null || myRelease === hiddenSentinel) {
+          alert('📅 Esta avaliação ainda não foi liberada para a sua turma.');
+          navigate('/');
+          return;
+        }
+        if (new Date(myRelease) > new Date()) {
+          alert('📅 Esta avaliação ainda não está disponível. Volte em ' + new Date(myRelease).toLocaleString('pt-BR') + '.');
+          navigate('/');
+          return;
+        }
+      } else if (examData.starts_at && new Date(examData.starts_at) > new Date()) {
+        // Sem controle por turma: usa starts_at global
         alert('📅 Esta avaliação ainda não está disponível. Volte em ' + new Date(examData.starts_at).toLocaleString('pt-BR') + '.');
         navigate('/');
         return;

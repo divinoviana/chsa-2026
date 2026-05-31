@@ -204,9 +204,18 @@ export const Home: React.FC = () => {
   //   - redação:  lesson_title = "Redação: <título>"
   //   - simulado: lesson_title = "Avaliação Bimestral: Xº Bimestre" (ou customizado)
   const now = new Date();
+  const myClassKey = String(student.school_class).trim();
   const pendingExams = exams.filter(e => {
-    // Ainda não liberado (agendamento futuro)
-    if (e.starts_at && new Date(e.starts_at) > now) return false;
+    // Controle por turma: se class_releases tem entrada para minha turma, usa ela
+    const releases = e.class_releases || {};
+    if (Object.keys(releases).length > 0) {
+      const myRelease = releases[myClassKey];
+      if (myRelease == null || myRelease === '2099-01-01T00:00:00Z') return false; // oculto para minha turma
+      if (new Date(myRelease) > now) return false; // agendado mas ainda não chegou
+    } else {
+      // Sem controle por turma: usa starts_at global
+      if (e.starts_at && new Date(e.starts_at) > now) return false;
+    }
     // Prazo encerrado — não mostra mais para o aluno
     if (e.expires_at && new Date(e.expires_at) < now) return false;
     // Verifica primeiro por ID (mais confiável — não depende de correspondência de string)

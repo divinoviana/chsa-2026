@@ -315,6 +315,8 @@ export const AdminDashboard: React.FC = () => {
   const [editExamStartsAt, setEditExamStartsAt] = useState('');
   const [editExamQuestions, setEditExamQuestions] = useState<any[]>([]);
   const [isSavingEditedExam, setIsSavingEditedExam] = useState(false);
+  const [editExamTarget, setEditExamTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
+  const [editExamClassReleases, setEditExamClassReleases] = useState<Record<string, string | null>>({});
 
   // ── Frequência (Geolocalização) ────────────────
   const [schoolLocation, setSchoolLocation] = useState<any | null>(null);
@@ -1418,12 +1420,23 @@ export const AdminDashboard: React.FC = () => {
     } else {
       setEditExamStartsAt('');
     }
+    // Reconstruct TargetClassValue from stored data
+    if (exam.school_classes && Array.isArray(exam.school_classes) && exam.school_classes.length > 0) {
+      setEditExamTarget({ mode: exam.school_classes.length === 1 ? 'single' : 'multi', classes: exam.school_classes });
+    } else if (exam.school_class) {
+      setEditExamTarget({ mode: 'single', classes: [exam.school_class] });
+    } else {
+      setEditExamTarget({ mode: 'all', classes: [] });
+    }
+    setEditExamClassReleases(exam.class_releases || {});
   };
 
   const handleSaveEditedExam = async () => {
     if (!editingPublishedExam) return;
     setIsSavingEditedExam(true);
     try {
+      const schoolClassSingle = editExamTarget.mode === 'single' ? (editExamTarget.classes[0] || null) : null;
+      const schoolClassesArray = editExamTarget.mode === 'multi' && editExamTarget.classes.length > 0 ? editExamTarget.classes : null;
       const { error } = await supabase
         .from('bimonthly_exams')
         .update({
@@ -1431,6 +1444,9 @@ export const AdminDashboard: React.FC = () => {
           questions: editExamQuestions,
           expires_at: editExamExpiresAt ? new Date(editExamExpiresAt).toISOString() : null,
           starts_at: editExamStartsAt ? new Date(editExamStartsAt).toISOString() : null,
+          school_class: schoolClassSingle,
+          school_classes: schoolClassesArray,
+          class_releases: editExamClassReleases,
         })
         .eq('id', editingPublishedExam.id);
       if (error) throw error;
@@ -4513,6 +4529,79 @@ export const AdminDashboard: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {/* Turmas-alvo */}
+            <div>
+              <TargetClassPicker
+                availableClasses={classesForGrade(String(editingPublishedExam.grade || ''))}
+                value={editExamTarget}
+                onChange={v => {
+                  setEditExamTarget(v);
+                  // Remove class_releases entries for classes no longer targeted
+                  if (v.mode !== 'all') {
+                    const newReleases: Record<string, string | null> = {};
+                    v.classes.forEach(c => { if (c in editExamClassReleases) newReleases[c] = editExamClassReleases[c]; });
+                    setEditExamClassReleases(newReleases);
+                  }
+                }}
+              />
+            </div>
+
+            {/* Controle por turma */}
+            {editExamTarget.mode !== 'all' && editExamTarget.classes.length > 0 && (
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">🎯 Liberar por Turma</p>
+                <div className="space-y-2">
+                  {editExamTarget.classes.map(cls => {
+                    const releaseVal = editExamClassReleases[cls];
+                    const isReleased = releaseVal != null && releaseVal !== '2099-01-01T00:00:00Z' && new Date(releaseVal) <= new Date();
+                    const isHiddenCls = !releaseVal || releaseVal === '2099-01-01T00:00:00Z';
+                    return (
+                      <div key={cls} className="flex items-center justify-between gap-3 bg-white dark:bg-slate-800 rounded-xl px-4 py-2.5 border border-slate-100 dark:border-slate-700">
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-sm text-slate-700 dark:text-slate-200">Turma {cls}</span>
+                          {isReleased && <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full">🟢 Liberada</span>}
+                          {isHiddenCls && <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">🙈 Oculta</span>}
+                          {!isReleased && !isHiddenCls && <span className="text-[9px] font-black uppercase tracking-widest text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">📅 Agendada</span>}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {!isReleased && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const now = new Date().toISOString();
+                                const updated = { ...editExamClassReleases, [cls]: now };
+                                setEditExamClassReleases(updated);
+                                await supabase.from('bimonthly_exams').update({ class_releases: updated }).eq('id', editingPublishedExam.id);
+                                fetchPublishedExams();
+                              }}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105"
+                            >
+                              ▶ Liberar
+                            </button>
+                          )}
+                          {isReleased && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const updated = { ...editExamClassReleases, [cls]: '2099-01-01T00:00:00Z' };
+                                setEditExamClassReleases(updated);
+                                await supabase.from('bimonthly_exams').update({ class_releases: updated }).eq('id', editingPublishedExam.id);
+                                fetchPublishedExams();
+                              }}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                            >
+                              🙈 Ocultar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[9px] text-slate-400 mt-2 ml-1">Liberações aqui são imediatas (salvo sem precisar clicar em "Salvar Alterações").</p>
+              </div>
+            )}
 
             {/* Questões */}
             {editExamQuestions.map((q: any, qi: number) => (
