@@ -150,12 +150,12 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
-      // OAuth via Supabase. Voltamos para a raiz do app — o StudentRoute em
-      // App.tsx redireciona pra /login automaticamente quando o aluno Google
-      // ainda não escolheu série e turma (perfil incompleto).
+      // OAuth via Supabase. Redirecionamos para /#/login pra garantir que
+      // o componente Login.tsx esteja montado quando a sessão for detectada.
+      // Com HashRouter o token PKCE chega como ?code= na query string (antes do #).
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo: window.location.origin + '/#/login' },
       });
       if (error) throw error;
     } catch (err: any) {

@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Upload, X, ArrowLeft, Loader2, Save, User, Pencil, Check } from 'lucide-react';
+import { Camera, Upload, X, ArrowLeft, Loader2, Save, Pencil, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,6 +14,10 @@ export const Profile: React.FC = () => {
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const [editingClass, setEditingClass] = useState(false);
+  const [newGrade, setNewGrade] = useState('');
+  const [newClass, setNewClass] = useState('');
+  const [savingClass, setSavingClass] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -82,6 +86,33 @@ export const Profile: React.FC = () => {
       alert('Erro ao salvar nome: ' + (err?.message || 'tente novamente.'));
     } finally {
       setSavingName(false);
+    }
+  };
+
+  const getClassesByGrade = (grade: string) => {
+    if (grade === '1') return Array.from({ length: 7 }, (_, i) => `13.0${i + 1}`);
+    if (grade === '2') return Array.from({ length: 8 }, (_, i) => `23.0${i + 1}`);
+    if (grade === '3') return Array.from({ length: 9 }, (_, i) => `33.0${i + 1}`);
+    return [];
+  };
+
+  const handleSaveClass = async () => {
+    if (!newClass || !student) { setEditingClass(false); return; }
+    if (newGrade === student.grade && newClass === student.school_class) { setEditingClass(false); return; }
+    setSavingClass(true);
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ grade: newGrade, school_class: newClass })
+        .eq('id', student.id);
+      if (error) throw error;
+      updateStudentData({ grade: newGrade, school_class: newClass });
+      setEditingClass(false);
+      alert('Série e turma atualizadas!');
+    } catch (err: any) {
+      alert('Erro ao salvar: ' + (err?.message || 'tente novamente.'));
+    } finally {
+      setSavingClass(false);
     }
   };
 
@@ -191,7 +222,49 @@ export const Profile: React.FC = () => {
                 </button>
               </div>
             )}
-            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em]">{student.grade}ª Série · Turma {student.school_class}</p>
+            {editingClass ? (
+              <div className="flex flex-col items-center gap-2 mt-1">
+                <div className="flex items-center gap-2">
+                  <select
+                    value={newGrade}
+                    onChange={e => { setNewGrade(e.target.value); setNewClass(getClassesByGrade(e.target.value)[0] || ''); }}
+                    className="bg-slate-100 dark:bg-slate-800 border-2 border-vibe-purple rounded-xl px-3 py-1.5 text-sm font-bold outline-none dark:text-white"
+                  >
+                    <option value="1">1ª Série</option>
+                    <option value="2">2ª Série</option>
+                    <option value="3">3ª Série</option>
+                  </select>
+                  <select
+                    value={newClass}
+                    onChange={e => setNewClass(e.target.value)}
+                    className="bg-slate-100 dark:bg-slate-800 border-2 border-vibe-purple rounded-xl px-3 py-1.5 text-sm font-bold outline-none dark:text-white"
+                  >
+                    {getClassesByGrade(newGrade).map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleSaveClass} disabled={savingClass} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-vibe text-white text-xs font-black hover:scale-105 transition-all disabled:opacity-50">
+                    {savingClass ? <Loader2 size={12} className="animate-spin"/> : <Check size={12}/>} Salvar
+                  </button>
+                  <button onClick={() => setEditingClass(false)} className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 text-xs font-black hover:scale-105 transition-all">
+                    <X size={12}/>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-1.5 mt-1">
+                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.3em]">
+                  {student.grade}ª Série · Turma {student.school_class}
+                </p>
+                <button
+                  onClick={() => { setNewGrade(String(student.grade || '1')); setNewClass(student.school_class || ''); setEditingClass(true); }}
+                  className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:scale-110 transition-all text-slate-400 dark:text-slate-500 hover:text-vibe-purple"
+                  title="Editar série e turma"
+                >
+                  <Pencil size={11}/>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
