@@ -257,6 +257,8 @@ export const AdminDashboard: React.FC = () => {
   const [students, setStudents] = useState<any[]>([]);
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [savedActivities, setSavedActivities] = useState<string[]>([]);
+  const [isRetryingAI, setIsRetryingAI] = useState(false);
+  const [retryProgress, setRetryProgress] = useState<{ done: number; total: number } | null>(null);
   
   // Chat e Mensagens
   const [chatSessions, setChatSessions] = useState<any[]>([]);
@@ -539,6 +541,155 @@ export const AdminDashboard: React.FC = () => {
       setSubmissions(list);
     } catch (e) {
       console.error("Erro ao buscar submissões:", e);
+    }
+  };
+
+  // Retry AI correction for all pending_ai submissions
+  const retryPendingAICorrections = async () => {
+    if (isRetryingAI) return;
+    setIsRetryingAI(true);
+    setRetryProgress(null);
+    try {
+      let qb = supabase.from('submissions').select('*').eq('status', 'pending_ai');
+      if (!isSuper && teacherSubject) qb = qb.eq('subject', teacherSubject);
+      const { data, error } = await qb;
+      if (error) throw error;
+      const pending = data || [];
+      if (pending.length === 0) { alert('Nenhuma submissão pendente de correção IA.'); return; }
+
+      setRetryProgress({ done: 0, total: pending.length });
+
+      const { evaluateActivities } = await import('../services/aiService');
+      const { evaluateEssay } = await import('../services/aiService');
+
+      for (let i = 0; i < pending.length; i++) {
+        const sub = pending[i];
+        try {
+          const isEssay = sub.ai_feedback?.type === 'essay_enem';
+
+          if (isEssay) {
+            const title = (sub.lesson_title || '').replace(/^Redação:\s*/i, '') || 'Redação';
+            const essayText = sub.content?.[0]?.answer || '';
+            const instructions = '';
+            if (!essayText) continue;
+            const enemEval = await evaluateEssay(title, essayText, instructions);
+            const finalScore = enemEval?.score0to10 ?? 0;
+            const integrityData = sub.ai_feedback?.integrity || {};
+            const plagiarism = sub.ai_feedback?.plagiarism || { detected: false, matches: [] };
+            const tabSw = integrityData.tab_switches || 0;
+            const pasteAt = integrityData.paste_attempts || 0;
+            const generalComment =
+              `${enemEval.generalComment} (Total: ${enemEval.totalScore}/1000)` +
+              ` · Aluno saiu da tela ${tabSw}× e tentou colar ${pasteAt}×.`;
+            await supabase.from('submissions').update({
+              score: finalScore,
+              ai_feedback: {
+                type: 'essay_enem',
+                generalComment,
+                corrections: [],
+                enem: enemEval,
+                integrity: integrityData,
+                plagiarism,
+              },
+              status: 'graded',
+            }).eq('id', sub.id);
+          } else {
+            // Simulado com discursivas
+            const { data: examData } = await supabase
+              .from('bimonthly_exams')
+              .select('title,bimester,topics,questions')
+              .eq('id', sub.lesson_id)
+              .maybeSingle();
+
+            const allQuestions = examData?.questions || [];
+            const existingCorrections: any[] = sub.ai_feedback?.corrections || [];
+            const plagiarism = sub.ai_feedback?.plagiarism || { detected: false, matches: [] };
+            const integrityData = sub.ai_feedback?.integrity || {};
+            const integrityNote = (Number(integrityData.tab_switches) > 0 || Number(integrityData.paste_attempts) > 0)
+              ? ` ⚠️ Integridade: ${integrityData.tab_switches} saída(s) de tela, ${integrityData.paste_attempts} tentativa(s) de colar.`
+              : '';
+
+            // Only re-run discursive questions that have score=null (pending)
+            const pendingDiscursive = existingCorrections.filter(c => c.type === 'discursive' && c.score == null);
+            if (pendingDiscursive.length === 0) {
+              // Nothing to correct - just mark complete
+              const objCorrections = existingCorrections.filter(c => c.type === 'objective');
+              const discCorrections = existingCorrections.filter(c => c.type === 'discursive');
+              const objTotal = objCorrections.filter(c => c.isCorrect).length;
+              const objCount = objCorrections.length;
+              const discCount = discCorrections.length;
+              const discTotal = discCorrections.reduce((s, c) => s + (Number(c.score) || 0), 0);
+              const objAvg = objCount > 0 ? (objTotal / objCount) * 10 : null;
+              const discAvg = discCount > 0 ? discTotal / discCount : null;
+              const totalQ = objCount + discCount;
+              let finalScore = objAvg != null && discAvg != null
+                ? (objAvg * objCount + discAvg * discCount) / totalQ
+                : objAvg ?? discAvg ?? 0;
+              finalScore = Math.round(finalScore * 10) / 10;
+              await supabase.from('submissions').update({ score: finalScore, status: 'completed' }).eq('id', sub.id);
+              continue;
+            }
+
+            const aiInput = pendingDiscursive.map((c: any) => ({
+              question: c.question,
+              answer: c.studentAnswer || '',
+            }));
+            const aiRes = await evaluateActivities(
+              `${examData?.title || 'Simulado'} (${examData?.bimester || '?'}º Bimestre)`,
+              (examData?.topics || []).join(', '),
+              aiInput
+            );
+
+            let discursiveTotalScore = 0;
+            const updatedCorrections = existingCorrections.map((c: any) => {
+              if (c.type !== 'discursive' || c.score != null) return c;
+              const idx = pendingDiscursive.findIndex((p: any) => p.questionId === c.questionId);
+              if (idx < 0 || !aiRes.corrections[idx]) return c;
+              const aiC = aiRes.corrections[idx];
+              discursiveTotalScore += Number(aiC.score) || 0;
+              return { ...c, isCorrect: aiC.isCorrect, score: aiC.score, feedback: aiC.feedback };
+            });
+
+            const allDiscursive = updatedCorrections.filter((c: any) => c.type === 'discursive');
+            const allObjective = updatedCorrections.filter((c: any) => c.type === 'objective');
+            const objCorrect = allObjective.filter((c: any) => c.isCorrect).length;
+            const discAvg = allDiscursive.length > 0
+              ? allDiscursive.reduce((s: number, c: any) => s + (Number(c.score) || 0), 0) / allDiscursive.length
+              : null;
+            const objAvg = allObjective.length > 0 ? (objCorrect / allObjective.length) * 10 : null;
+            const totalQ = allObjective.length + allDiscursive.length;
+            let finalScore = objAvg != null && discAvg != null
+              ? (objAvg * allObjective.length + discAvg * allDiscursive.length) / totalQ
+              : objAvg ?? discAvg ?? 0;
+            finalScore = Math.round(finalScore * 10) / 10;
+
+            const generalComment = (aiRes.generalComment ||
+              `Simulado finalizado. Objetivas: ${objCorrect}/${allObjective.length} acertos.`) + integrityNote;
+
+            await supabase.from('submissions').update({
+              score: finalScore,
+              ai_feedback: {
+                generalComment,
+                corrections: updatedCorrections,
+                integrity: integrityData,
+                plagiarism,
+              },
+              status: 'completed',
+            }).eq('id', sub.id);
+          }
+        } catch (subErr) {
+          console.warn(`Falha ao corrigir submissão ${sub.id}:`, subErr);
+        }
+        setRetryProgress({ done: i + 1, total: pending.length });
+      }
+
+      await fetchSubmissions();
+      alert(`Correção concluída! ${pending.length} submissão(ões) processada(s).`);
+    } catch (e: any) {
+      alert('Erro ao buscar submissões pendentes: ' + e.message);
+    } finally {
+      setIsRetryingAI(false);
+      setRetryProgress(null);
     }
   };
 
@@ -2446,13 +2597,44 @@ export const AdminDashboard: React.FC = () => {
 
             return (
               <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="flex items-center justify-between px-2">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    {groups.length} {groups.length === 1 ? 'estudante' : 'estudantes'} · {filteredSubmissions.length} entregas
-                  </p>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:block">
-                    Clique no estudante para expandir
-                  </p>
+                <div className="flex items-center justify-between px-2 gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      {groups.length} {groups.length === 1 ? 'estudante' : 'estudantes'} · {filteredSubmissions.length} entregas
+                    </p>
+                    {(() => {
+                      const pendingAI = submissions.filter(s => s.status === 'pending_ai' && (!teacherSubject || isSuper || s.subject === teacherSubject));
+                      if (pendingAI.length === 0) return null;
+                      return (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[9px] font-black uppercase tracking-widest">
+                          🤖 {pendingAI.length} aguardando IA
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const pendingAI = submissions.filter(s => s.status === 'pending_ai' && (!teacherSubject || isSuper || s.subject === teacherSubject));
+                      if (pendingAI.length === 0) return null;
+                      return (
+                        <button
+                          onClick={retryPendingAICorrections}
+                          disabled={isRetryingAI}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {isRetryingAI ? (
+                            <><Loader2 size={10} className="animate-spin"/>
+                            {retryProgress ? `${retryProgress.done}/${retryProgress.total}` : 'Corrigindo…'}</>
+                          ) : (
+                            <>🤖 Corrigir Pendentes ({pendingAI.length})</>
+                          )}
+                        </button>
+                      );
+                    })()}
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:block">
+                      Clique no estudante para expandir
+                    </p>
+                  </div>
                 </div>
 
                 {groups.length === 0 ? (
@@ -2539,7 +2721,8 @@ export const AdminDashboard: React.FC = () => {
                                       <div className="flex items-center gap-2 mb-0.5">
                                         {isEssay && <span className="px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 rounded text-[8px] font-black uppercase tracking-widest shrink-0">Redação</span>}
                                         {isExam && <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded text-[8px] font-black uppercase tracking-widest shrink-0">Simulado</span>}
-                                        {!sub.teacher_feedback && !isEssay && <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded text-[8px] font-black uppercase tracking-widest shrink-0">Pendente</span>}
+                                        {sub.status === 'pending_ai' && <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded text-[8px] font-black uppercase tracking-widest shrink-0">🤖 Aguard. IA</span>}
+                                        {!sub.teacher_feedback && !isEssay && sub.status !== 'pending_ai' && <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded text-[8px] font-black uppercase tracking-widest shrink-0">Pendente</span>}
                                         {flagged && (
                                           <span
                                             title={`Saiu da tela ${tabSw}× · Tentou colar ${pasteAt}×`}
@@ -2557,8 +2740,8 @@ export const AdminDashboard: React.FC = () => {
                                       </p>
                                     </div>
                                     {/* Nota */}
-                                    <div className={`hidden sm:inline-flex items-center px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest shrink-0 ${scoreClass}`}>
-                                      {score.toFixed(1)} / 10
+                                    <div className={`hidden sm:inline-flex items-center px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest shrink-0 ${sub.status === 'pending_ai' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : scoreClass}`}>
+                                      {sub.status === 'pending_ai' ? '— / 10' : `${score.toFixed(1)} / 10`}
                                     </div>
                                     {/* Botão Avaliar */}
                                     <button

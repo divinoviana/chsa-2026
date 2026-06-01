@@ -378,36 +378,18 @@ export const EvaluationView: React.FC = () => {
       const instructions = exam.questions?.[0]?.instructions || '';
       const wordCount = essayText.split(/\s+/).filter(Boolean).length;
       const charCount = essayText.length;
+      const integrityData = getIntegrityData();
 
-      // 1) Chama a IA pra corrigir no padrão ENEM
-      let enemEval: any = null;
-      setIsCorrectingEssay(true);
-      try {
-        const { evaluateEssay } = await import('../services/aiService');
-        enemEval = await evaluateEssay(title, essayText, instructions);
-      } catch (e) {
-        console.warn('Falha na correção IA da redação; gravando sem correção:', e);
-      } finally {
-        setIsCorrectingEssay(false);
-      }
-
-      // Detecção de plágio (compara com redações anteriores do mesmo exam)
+      // Detecção de plágio (rápido, local)
       const plagiarism = await detectPlagiarism(examId!, [essayText]);
       setPlagiarismResult(plagiarism);
-      const essayFinalScore = plagiarism.detected ? 0 : (enemEval?.score0to10 || 0);
-      setScore(essayFinalScore);
-      setEssayCorrection(plagiarism.detected ? null : (enemEval || null));
 
-      const integrityData = getIntegrityData();
-      const generalComment = plagiarism.detected
+      const initialComment = plagiarism.detected
         ? `⚠️ PLÁGIO DETECTADO: Alta similaridade com redação de ${plagiarism.matches.join(', ')}. Nota zerada automaticamente. Aguardando revisão do professor.`
-        : (enemEval
-            ? `${enemEval.generalComment} (Total: ${enemEval.totalScore}/1000)` +
-              ` · Aluno saiu da tela ${tabSwitches}× e tentou colar ${pasteAttempts}×.`
-            : `Redação enviada. ${wordCount} palavras, ${charCount} caracteres. ` +
-              `Aluno saiu da tela ${tabSwitches}× e tentou colar texto externo ${pasteAttempts}×.`);
+        : `Redação enviada. ${wordCount} palavras, ${charCount} caracteres. Correção pela IA em andamento…`;
 
-      const { error } = await supabase.from('submissions').insert({
+      // 1) SALVA PRIMEIRO — aluno não fica esperando a IA
+      const { data: insertedRow, error } = await supabase.from('submissions').insert({
         student_id: student.id,
         student_name: student.name.trim(),
         school_class: student.school_class.trim(),
@@ -415,7 +397,7 @@ export const EvaluationView: React.FC = () => {
         lesson_id: examId,
         lesson_title: `Redação: ${title}`,
         subject: exam.subject,
-        score: essayFinalScore,
+        score: plagiarism.detected ? 0 : null,
         content: [{
           question: title,
           answer: essayText,
@@ -426,32 +408,67 @@ export const EvaluationView: React.FC = () => {
         }],
         ai_feedback: {
           type: 'essay_enem',
-          generalComment,
+          generalComment: initialComment,
           corrections: [],
-          enem: plagiarism.detected ? null : (enemEval || null),
+          enem: null,
           integrity: integrityData,
           plagiarism,
         },
         teacher_feedback: null,
         submitted_at: nowIso,
         submission_date: nowIso,
-        status: plagiarism.detected ? 'plagiarism_suspected' : (enemEval ? 'graded' : 'pending'),
-      });
+        status: plagiarism.detected ? 'plagiarism_suspected' : 'pending_ai',
+      }).select('id').single();
       if (error) throw error;
+
+      // 2) Aluno já está salvo — mostra tela de conclusão
+      setScore(plagiarism.detected ? 0 : 0);
       setIsFinished(true);
+      setIsSubmitting(false);
+
+      // 3) Tenta correção IA em background (não bloqueia o aluno)
+      if (!plagiarism.detected && insertedRow?.id) {
+        const submissionId = insertedRow.id;
+        setIsCorrectingEssay(true);
+        (async () => {
+          try {
+            const { evaluateEssay } = await import('../services/aiService');
+            const enemEval = await evaluateEssay(title, essayText, instructions);
+            const finalScore = enemEval?.score0to10 ?? 0;
+            setScore(finalScore);
+            setEssayCorrection(enemEval ?? null);
+            const generalComment =
+              `${enemEval.generalComment} (Total: ${enemEval.totalScore}/1000)` +
+              ` · Aluno saiu da tela ${tabSwitches}× e tentou colar ${pasteAttempts}×.`;
+            await supabase.from('submissions').update({
+              score: finalScore,
+              ai_feedback: {
+                type: 'essay_enem',
+                generalComment,
+                corrections: [],
+                enem: enemEval,
+                integrity: integrityData,
+                plagiarism,
+              },
+              status: 'graded',
+            }).eq('id', submissionId);
+          } catch (e) {
+            console.warn('Correção IA da redação falhou; ficará como pending_ai para retry pelo prof:', e);
+          } finally {
+            setIsCorrectingEssay(false);
+          }
+        })();
+      }
     } catch (err: any) {
       alert('Falha ao enviar redação: ' + (err?.message || 'tente novamente.'));
-      console.error(err);
-    } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleSubmit = async () => {
-    // Redação: caminho próprio (sem corrigir)
+    // Redação: caminho próprio
     if (isEssay) return handleSubmitEssay();
 
-    // Conta quantas questões devem ter resposta (todas as do exam)
     const activeQs = (shuffledExam || exam).questions;
     const totalQuestions = activeQs.length;
     const answeredCount = activeQs.filter((q: any) => {
@@ -470,7 +487,7 @@ export const EvaluationView: React.FC = () => {
 
     setIsSubmitting(true);
 
-    // 1) Corrige OBJETIVAS localmente (precisão 100%)
+    // 1) Corrige OBJETIVAS localmente (instantâneo, sem IA)
     const objectiveQs = activeQs.filter((q: any) => q.type !== 'discursive' && q.options && q.correctOption);
     const discursiveQs = activeQs.filter((q: any) => q.type === 'discursive' || !q.options || !q.correctOption);
 
@@ -494,95 +511,50 @@ export const EvaluationView: React.FC = () => {
       });
     });
 
-    // 2) Corrige DISCURSIVAS via IA (com fallback se IA cair)
-    let aiGeneralComment: string | null = null;
-    let discursiveTotalScore = 0;
-    if (discursiveQs.length > 0) {
-      try {
-        const { evaluateActivities } = await import('../services/aiService');
-        const aiInput = discursiveQs.map((q: any) => ({
-          question: q.questionText,
-          answer: String(answers[q.id] || ''),
-          // sem correctAnswer → força a IA a avaliar densidade conceitual
-        }));
-        const aiRes = await evaluateActivities(
-          `${exam.title || 'Simulado Bimestral'} (${exam.bimester}º Bimestre)`,
-          (exam.topics || []).join(', '),
-          aiInput
-        );
-        aiGeneralComment = aiRes.generalComment;
-        aiRes.corrections.forEach((c, i) => {
-          const q = discursiveQs[i];
-          discursiveTotalScore += Number(c.score) || 0;
-          correctionDetails.push({
-            questionId: q?.id,
-            type: 'discursive',
-            question: c.question,
-            studentAnswer: c.studentAnswer,
-            isCorrect: c.isCorrect,
-            score: c.score,
-            feedback: c.feedback,
-          });
-        });
-      } catch (e) {
-        console.warn('IA falhou nas discursivas; aplicando fallback:', e);
-        discursiveQs.forEach((q: any) => {
-          const ans = String(answers[q.id] || '').trim();
-          const score = ans.length >= 30 ? 6 : 0;
-          discursiveTotalScore += score;
-          correctionDetails.push({
-            questionId: q.id,
-            type: 'discursive',
-            question: q.questionText,
-            studentAnswer: ans || '(não respondida)',
-            isCorrect: score >= 6,
-            score,
-            feedback: score >= 6
-              ? 'Resposta registrada. Aguardando avaliação detalhada do professor.'
-              : 'Resposta muito breve ou ausente. O professor irá revisar.',
-          });
-        });
-      }
-    }
+    // Placeholders para discursivas (serão preenchidos pela IA em background)
+    discursiveQs.forEach((q: any) => {
+      correctionDetails.push({
+        questionId: q.id,
+        type: 'discursive',
+        question: q.questionText,
+        studentAnswer: String(answers[q.id] || '').trim() || '(não respondida)',
+        correctAnswer: null,
+        isCorrect: null,
+        score: null,
+        feedback: 'Aguardando correção pela IA.',
+      });
+    });
 
-    // 3) Calcula nota final 0–10 considerando objetivas + discursivas
-    const objectiveScoreAvg = objectiveQs.length > 0 ? (objectiveCorrect / objectiveQs.length) * 10 : 0;
-    const discursiveScoreAvg = discursiveQs.length > 0 ? (discursiveTotalScore / discursiveQs.length) : 0;
-
-    let finalScore: number;
-    if (objectiveQs.length > 0 && discursiveQs.length > 0) {
-      // Peso proporcional ao número de questões de cada tipo
-      const totalQ = objectiveQs.length + discursiveQs.length;
-      finalScore = (objectiveScoreAvg * objectiveQs.length + discursiveScoreAvg * discursiveQs.length) / totalQ;
-    } else if (objectiveQs.length > 0) {
-      finalScore = objectiveScoreAvg;
-    } else {
-      finalScore = discursiveScoreAvg;
-    }
-    finalScore = Math.round(finalScore * 10) / 10; // 1 casa decimal
-
-    // 4) Detecção de plágio nas discursivas (compara com submissões anteriores)
-    const myDiscursiveTexts = discursiveQs.map((q: any) => String(answers[q.id] || '').trim());
-    const plagiarism = await detectPlagiarism(examId!, myDiscursiveTexts);
-    setPlagiarismResult(plagiarism);
-    if (plagiarism.detected) finalScore = 0;
-
-    setScore(finalScore);
-
+    // 2) Nota parcial a partir das objetivas (discursivas pendentes)
+    const objectiveScoreAvg = objectiveQs.length > 0 ? (objectiveCorrect / objectiveQs.length) * 10 : null;
+    const hasDiscursives = discursiveQs.length > 0;
+    const onlyObjective = objectiveQs.length > 0 && !hasDiscursives;
     const integrityData = getIntegrityData();
-    const baseComment = plagiarism.detected
-      ? `⚠️ PLÁGIO DETECTADO: Alta similaridade com respostas de ${plagiarism.matches.join(', ')}. Nota zerada automaticamente. Aguardando revisão do professor.`
-      : (aiGeneralComment ||
-          `Simulado finalizado. Objetivas: ${objectiveCorrect}/${objectiveQs.length} acertos. Discursivas: nota média ${discursiveScoreAvg.toFixed(1)}.`);
     const integrityNote = (tabSwitches > 0 || pasteAttempts > 0 || extensionDetected || programmaticInputs > 0)
       ? ` ⚠️ Integridade: ${tabSwitches} saída(s) de tela, ${pasteAttempts} tentativa(s) de colar${extensionDetected ? ', extensão detectada' : ''}${programmaticInputs > 0 ? `, ${programmaticInputs} inserção(ões) programática(s)` : ''}.`
       : '';
-    const generalComment = baseComment + integrityNote;
 
+    // 3) Detecção de plágio (rápida, antes de salvar)
+    const myDiscursiveTexts = discursiveQs.map((q: any) => String(answers[q.id] || '').trim());
+    const plagiarism = await detectPlagiarism(examId!, myDiscursiveTexts);
+    setPlagiarismResult(plagiarism);
+
+    const prelimScore = plagiarism.detected ? 0
+      : onlyObjective ? (Math.round((objectiveScoreAvg || 0) * 10) / 10)
+      : (objectiveScoreAvg != null ? Math.round(objectiveScoreAvg * 10) / 10 : null);
+
+    const initialComment = plagiarism.detected
+      ? `⚠️ PLÁGIO DETECTADO: Alta similaridade com respostas de ${plagiarism.matches.join(', ')}. Nota zerada automaticamente. Aguardando revisão do professor.`
+      : onlyObjective
+        ? `Simulado finalizado. Objetivas: ${objectiveCorrect}/${objectiveQs.length} acertos.` + integrityNote
+        : `Objetivas: ${objectiveCorrect}/${objectiveQs.length} acertos. Questões discursivas aguardando correção pela IA.` + integrityNote;
+
+    const nowIso = new Date().toISOString();
+    const examTitle = exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`;
+
+    // 4) SALVA IMEDIATAMENTE — aluno não espera pela IA
     try {
-      const nowIso = new Date().toISOString();
-      const examTitle = exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`;
-      const { error } = await supabase.from('submissions').insert({
+      const { data: insertedRow, error } = await supabase.from('submissions').insert({
         student_id: student.id,
         student_name: student.name.trim(),
         school_class: student.school_class.trim(),
@@ -590,14 +562,14 @@ export const EvaluationView: React.FC = () => {
         lesson_id: examId,
         lesson_title: examTitle.trim(),
         subject: exam.subject,
-        score: finalScore,
+        score: prelimScore,
         content: correctionDetails.map(c => ({
           question: c.question,
           answer: c.studentAnswer,
-          correctAnswer: c.correctAnswer,
+          correctAnswer: c.correctAnswer ?? undefined,
         })),
         ai_feedback: {
-          generalComment,
+          generalComment: initialComment,
           corrections: correctionDetails,
           integrity: integrityData,
           plagiarism,
@@ -605,15 +577,70 @@ export const EvaluationView: React.FC = () => {
         teacher_feedback: null,
         submitted_at: nowIso,
         submission_date: nowIso,
-        status: plagiarism.detected ? 'plagiarism_suspected' : 'completed',
-      });
+        status: plagiarism.detected ? 'plagiarism_suspected'
+          : (hasDiscursives ? 'pending_ai' : 'completed'),
+      }).select('id').single();
       if (error) throw error;
 
+      setScore(prelimScore ?? objectiveScoreAvg ?? 0);
       setIsFinished(true);
+      setIsSubmitting(false);
+
+      // 5) IA em background para discursivas (não bloqueia)
+      if (hasDiscursives && !plagiarism.detected && insertedRow?.id) {
+        const submissionId = insertedRow.id;
+        (async () => {
+          try {
+            const { evaluateActivities } = await import('../services/aiService');
+            const aiInput = discursiveQs.map((q: any) => ({
+              question: q.questionText,
+              answer: String(answers[q.id] || ''),
+            }));
+            const aiRes = await evaluateActivities(
+              `${exam.title || 'Simulado Bimestral'} (${exam.bimester}º Bimestre)`,
+              (exam.topics || []).join(', '),
+              aiInput
+            );
+
+            let discursiveTotalScore = 0;
+            const finalDetails = correctionDetails.map(c => {
+              if (c.type !== 'discursive') return c;
+              const idx = discursiveQs.findIndex((q: any) => q.id === c.questionId);
+              if (idx < 0 || !aiRes.corrections[idx]) return c;
+              const aiC = aiRes.corrections[idx];
+              discursiveTotalScore += Number(aiC.score) || 0;
+              return { ...c, isCorrect: aiC.isCorrect, score: aiC.score, feedback: aiC.feedback };
+            });
+
+            const discursiveScoreAvg = discursiveTotalScore / discursiveQs.length;
+            const totalQ = objectiveQs.length + discursiveQs.length;
+            let finalScore = objectiveQs.length > 0 && discursiveQs.length > 0
+              ? ((objectiveScoreAvg || 0) * objectiveQs.length + discursiveScoreAvg * discursiveQs.length) / totalQ
+              : discursiveScoreAvg;
+            finalScore = Math.round(finalScore * 10) / 10;
+
+            const finalComment = (aiRes.generalComment ||
+              `Simulado finalizado. Objetivas: ${objectiveCorrect}/${objectiveQs.length} acertos. Discursivas: média ${discursiveScoreAvg.toFixed(1)}.`)
+              + integrityNote;
+
+            await supabase.from('submissions').update({
+              score: finalScore,
+              ai_feedback: {
+                generalComment: finalComment,
+                corrections: finalDetails,
+                integrity: integrityData,
+                plagiarism,
+              },
+              status: 'completed',
+            }).eq('id', submissionId);
+          } catch (e) {
+            console.warn('IA falhou nas discursivas em background; ficará pending_ai para retry:', e);
+          }
+        })();
+      }
     } catch (err: any) {
       console.error('Erro ao salvar avaliação:', err);
       alert('Falha ao salvar: ' + (err?.message || 'tente novamente.'));
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -934,7 +961,7 @@ export const EvaluationView: React.FC = () => {
                     ? (isEssay ? '🔒 Redação já Enviada' : '🔒 Prova já Realizada')
                     : (isEssay
                         ? (essayCorrection ? '🎯 Sua Nota ENEM' : '✍️ Redação Enviada!')
-                        : '🎉 Mandou bem!')}
+                        : '🎉 Enviado com Sucesso!')}
                 </span>
               </h2>
               <p className="text-slate-500 dark:text-slate-400 font-bold text-sm tracking-wide mb-2 max-w-md mx-auto">
@@ -943,9 +970,20 @@ export const EvaluationView: React.FC = () => {
                   : isEssay
                     ? (essayCorrection
                         ? 'A IA corrigiu pelas 5 competências do ENEM. O professor revisa e dá a nota final.'
-                        : 'Sua redação foi enviada. O professor vai avaliar em breve.')
-                    : 'Sua resposta foi enviada e a IA já corrigiu!'}
+                        : isCorrectingEssay
+                          ? '✅ Redação salva! A IA está corrigindo em segundo plano…'
+                          : '✅ Redação enviada e salva. O professor vai avaliar em breve.')
+                    : (isCorrectingEssay
+                        ? '✅ Resposta salva! A IA está finalizando a correção das questões discursivas…'
+                        : '✅ Resposta salva com sucesso!')}
               </p>
+              {/* Indicador de correção em background */}
+              {isCorrectingEssay && !alreadyDone && (
+                <div className="flex items-center justify-center gap-2 mt-2 mb-4">
+                  <Loader2 size={14} className="animate-spin text-vibe-purple"/>
+                  <span className="text-[10px] font-black text-vibe-purple uppercase tracking-widest">IA corrigindo…</span>
+                </div>
+              )}
               {/* Aviso de plágio detectado */}
               {!alreadyDone && plagiarismResult?.detected && (
                 <div className="bg-red-50 dark:bg-red-950/30 border-2 border-red-400 rounded-3xl p-5 mt-4 mb-4 text-left max-w-md mx-auto">
@@ -956,7 +994,7 @@ export const EvaluationView: React.FC = () => {
                 </div>
               )}
 
-              {!alreadyDone && !isEssay && !plagiarismResult?.detected && score > 0 && (
+              {!alreadyDone && !isEssay && !plagiarismResult?.detected && score > 0 && !isCorrectingEssay && (
                 <div className="inline-flex items-center gap-3 bg-gradient-fire text-white px-8 py-4 rounded-full shadow-glow-orange mt-4 mb-8 animate-pulse-glow">
                   <Award size={24}/>
                   <span className="text-3xl font-black tracking-tighter">{score.toFixed(1)}</span>
