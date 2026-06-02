@@ -129,9 +129,19 @@ export const EvaluationView: React.FC = () => {
   const [shuffledExam, setShuffledExam] = useState<any>(null);
   const [timeLeft, setTimeLeft] = useState(30 * 60);
   const [isAnnulled, setIsAnnulled] = useState(false);
+  const [annulReason, setAnnulReason] = useState('');
   const [plagiarismResult, setPlagiarismResult] = useState<{ detected: boolean; matches: string[] } | null>(null);
   const skipConfirmRef = useRef(false);
   const autoSubmittedRef = useRef(false);
+
+  // Device fingerprint persistente — identifica o dispositivo entre contas
+  const deviceId = useRef<string>((() => {
+    try {
+      let id = localStorage.getItem('chsa_device_id');
+      if (!id) { id = crypto.randomUUID(); localStorage.setItem('chsa_device_id', id); }
+      return id;
+    } catch { return 'unknown'; }
+  })());
 
   // Resultado da correção IA da redação (5 competências ENEM)
   const [essayCorrection, setEssayCorrection] = useState<any | null>(null);
@@ -182,6 +192,26 @@ export const EvaluationView: React.FC = () => {
     if (totalViolations >= 10) handleAnnulExam();
   }, [tabSwitches, pasteAttempts, programmaticInputs]);
 
+  // Realtime: detecta anulação ao vivo pelo professor
+  useEffect(() => {
+    if (!examId || !student?.id || isFinished) return;
+    const channel = supabase
+      .channel(`exam_ban_${student.id}_${examId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'active_exam_bans',
+        filter: `student_id=eq.${student.id}`,
+      }, (payload: any) => {
+        if (payload.new?.exam_id !== examId) return;
+        const reason = payload.new?.reason || 'Anulado pelo professor.';
+        setAnnulReason(reason);
+        handleAnnulExamByTeacher(reason);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [examId, student?.id, isFinished]);
+
   const handleAnnulExam = async () => {
     if (isFinished || isAnnulled || !exam || !student) return;
     setIsAnnulled(true);
@@ -216,6 +246,7 @@ export const EvaluationView: React.FC = () => {
         submitted_at: nowIso,
         submission_date: nowIso,
         status: 'annulled',
+        device_id: deviceId.current,
       });
     } catch (e) {
       console.error('Erro ao registrar prova anulada:', e);
@@ -250,6 +281,42 @@ export const EvaluationView: React.FC = () => {
     } catch (msgErr) {
       console.warn('Falha ao notificar professor (não crítico):', msgErr);
     }
+  };
+
+  // Anulação iniciada pelo professor via Realtime
+  const handleAnnulExamByTeacher = async (reason: string) => {
+    if (isFinished || isAnnulled || !exam || !student) return;
+    setIsAnnulled(true);
+    setAnnulReason(reason);
+    setIsFinished(true);
+    try { localStorage.setItem(`annulled_${student.id}_${examId}`, '1'); } catch(_e) {}
+    const nowIso = new Date().toISOString();
+    const examTitle = exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`;
+    try {
+      await supabase.from('submissions').insert({
+        student_id: student.id,
+        student_name: student.name.trim(),
+        school_class: student.school_class.trim(),
+        grade: student.grade,
+        lesson_id: examId,
+        lesson_title: examTitle.trim(),
+        subject: exam.subject,
+        score: 0,
+        content: [],
+        ai_feedback: {
+          generalComment: `Prova ANULADA PELO PROFESSOR. Motivo: ${reason}`,
+          corrections: [],
+          integrity: getIntegrityData(),
+          annulled: true,
+          annulled_by: 'teacher',
+        },
+        teacher_feedback: null,
+        submitted_at: nowIso,
+        submission_date: nowIso,
+        status: 'annulled',
+        device_id: deviceId.current,
+      });
+    } catch (e) { console.error('Erro ao registrar anulação pelo professor:', e); }
   };
 
   const checkAttemptAndFetchExam = async () => {
@@ -308,6 +375,88 @@ export const EvaluationView: React.FC = () => {
       if (examData.expires_at && new Date(examData.expires_at) < new Date()) {
         alert('⏰ O prazo para esta avaliação foi encerrado. Você não pode mais realizá-la.');
         navigate('/');
+        return;
+      }
+
+      // ── Geofencing ───────────────────────────────────────────────────────────
+      // Se a escola tem localização cadastrada, o aluno precisa estar no perímetro.
+      try {
+        const { data: locData } = await supabase
+          .from('school_locations')
+          .select('latitude,longitude,radius_meters')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (locData?.latitude && locData?.longitude && locData?.radius_meters) {
+          const pos: GeolocationPosition = await new Promise((res, rej) =>
+            navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, maximumAge: 60000 })
+          );
+          const R = 6371000;
+          const dLat = (pos.coords.latitude  - locData.latitude)  * Math.PI / 180;
+          const dLon = (pos.coords.longitude - locData.longitude) * Math.PI / 180;
+          const a = Math.sin(dLat/2)**2 +
+            Math.cos(locData.latitude * Math.PI / 180) *
+            Math.cos(pos.coords.latitude * Math.PI / 180) *
+            Math.sin(dLon/2)**2;
+          const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          if (dist > locData.radius_meters) {
+            alert(`📍 Você está fora do perímetro da escola (${Math.round(dist)} m de distância, limite: ${locData.radius_meters} m).\nEsta avaliação só pode ser realizada presencialmente.`);
+            navigate('/');
+            return;
+          }
+        }
+      } catch (geoErr: any) {
+        // GPS negado ou indisponível: bloqueia se a escola tiver localização configurada
+        const { data: hasLoc } = await supabase
+          .from('school_locations')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        if (hasLoc) {
+          alert('📍 Habilite a localização no seu dispositivo para realizar esta avaliação presencialmente.');
+          navigate('/');
+          return;
+        }
+        // Sem localização configurada: permite continuar
+      }
+
+      // ── Anti-conta-dupla ─────────────────────────────────────────────────────
+      // 1) Verifica ban por device_id (mesmo aparelho, outra conta)
+      const myDeviceId = deviceId.current;
+      if (myDeviceId && myDeviceId !== 'unknown') {
+        const { data: deviceBan } = await supabase
+          .from('submissions')
+          .select('id, student_name')
+          .eq('lesson_id', examId)
+          .eq('device_id', myDeviceId)
+          .eq('status', 'annulled')
+          .neq('student_id', student.id)
+          .limit(1)
+          .maybeSingle();
+        if (deviceBan) {
+          alert(`🚫 Este dispositivo foi usado para uma tentativa anulada nesta avaliação (aluno: ${deviceBan.student_name}).\nVocê não pode realizar esta avaliação neste aparelho.`);
+          try { localStorage.setItem(`annulled_${student.id}_${examId}`, '1'); } catch(_e) {}
+          setIsAnnulled(true); setAlreadyDone(true); setIsFinished(true);
+          setCheckingStatus(false);
+          return;
+        }
+      }
+      // 2) Verifica ban por nome+turma (outro email, mesma pessoa)
+      const { data: nameBan } = await supabase
+        .from('submissions')
+        .select('id, student_name')
+        .eq('lesson_id', examId)
+        .eq('student_name', student.name.trim())
+        .eq('school_class', student.school_class.trim())
+        .eq('status', 'annulled')
+        .neq('student_id', student.id)
+        .limit(1)
+        .maybeSingle();
+      if (nameBan) {
+        alert(`🚫 Uma tentativa anulada já foi registrada para "${student.name}" nesta avaliação.\nVocê não pode refazê-la.`);
+        try { localStorage.setItem(`annulled_${student.id}_${examId}`, '1'); } catch(_e) {}
+        setIsAnnulled(true); setAlreadyDone(true); setIsFinished(true);
+        setCheckingStatus(false);
         return;
       }
 
@@ -418,6 +567,7 @@ export const EvaluationView: React.FC = () => {
         submitted_at: nowIso,
         submission_date: nowIso,
         status: plagiarism.detected ? 'plagiarism_suspected' : 'pending_ai',
+        device_id: deviceId.current,
       }).select('id').single();
       if (error) throw error;
 
@@ -579,6 +729,7 @@ export const EvaluationView: React.FC = () => {
         submission_date: nowIso,
         status: plagiarism.detected ? 'plagiarism_suspected'
           : (hasDiscursives ? 'pending_ai' : 'completed'),
+        device_id: deviceId.current,
       }).select('id').single();
       if (error) throw error;
 
@@ -927,17 +1078,26 @@ export const EvaluationView: React.FC = () => {
               </div>
               <h2 className="text-4xl font-black tracking-tighter mb-3 text-red-600 dark:text-red-400">🚫 Prova Anulada</h2>
               <p className="text-slate-500 dark:text-slate-400 font-bold text-sm mb-5 max-w-sm mx-auto leading-relaxed">
-                Sua prova foi <strong>ANULADA</strong> por excesso de infrações (tentativas de cola + saídas de tela). Nota registrada: <strong>0,0</strong>.
+                {annulReason
+                  ? <><strong>ANULADA pelo professor.</strong> Nota registrada: <strong>0,0</strong>.</>
+                  : <>Sua prova foi <strong>ANULADA</strong> por excesso de infrações (tentativas de cola + saídas de tela). Nota registrada: <strong>0,0</strong>.</>}
               </p>
-              <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-2xl p-4 mb-6 text-left max-w-xs mx-auto">
-                <p className="text-[10px] font-black text-red-700 dark:text-red-300 uppercase tracking-widest mb-2">Infrações registradas</p>
-                <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
-                  <li>• Saídas de tela: <strong>{tabSwitches}</strong></li>
-                  <li>• Tentativas de colar: <strong>{pasteAttempts}</strong></li>
-                  {programmaticInputs > 0 && <li>• Inserções automáticas: <strong>{programmaticInputs}</strong></li>}
-                  <li className="pt-1 font-black text-red-600 dark:text-red-400">Total: {tabSwitches + pasteAttempts + programmaticInputs}/10</li>
-                </ul>
-              </div>
+              {annulReason ? (
+                <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-2xl p-4 mb-6 text-left max-w-xs mx-auto">
+                  <p className="text-[10px] font-black text-red-700 dark:text-red-300 uppercase tracking-widest mb-1">Motivo</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">{annulReason}</p>
+                </div>
+              ) : (
+                <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-2xl p-4 mb-6 text-left max-w-xs mx-auto">
+                  <p className="text-[10px] font-black text-red-700 dark:text-red-300 uppercase tracking-widest mb-2">Infrações registradas</p>
+                  <ul className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
+                    <li>• Saídas de tela: <strong>{tabSwitches}</strong></li>
+                    <li>• Tentativas de colar: <strong>{pasteAttempts}</strong></li>
+                    {programmaticInputs > 0 && <li>• Inserções automáticas: <strong>{programmaticInputs}</strong></li>}
+                    <li className="pt-1 font-black text-red-600 dark:text-red-400">Total: {tabSwitches + pasteAttempts + programmaticInputs}/10</li>
+                  </ul>
+                </div>
+              )}
               <button onClick={() => navigate('/')} className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 py-4 px-8 rounded-2xl font-black uppercase text-[10px] tracking-[0.25em] hover:scale-105 transition-all">🏠 Voltar ao Início</button>
             </div>
           </div>

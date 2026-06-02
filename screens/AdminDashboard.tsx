@@ -13,7 +13,7 @@ import {
   Clock, Send, BrainCircuit, Sparkles, FileText, CheckCircle2,
   Filter, Download, GraduationCap, ChevronRight, ClipboardEdit, 
   BarChart3, Printer, Wand2, Library, ListChecks, Database,
-  Sun, Moon, Presentation, ClipboardList, LogOut, Pencil, Eye, UserCircle, RotateCw, MapPin, Crosshair, Target, AlertTriangle, ExternalLink, KeyRound, Menu
+  Sun, Moon, Presentation, ClipboardList, LogOut, Pencil, Eye, UserCircle, RotateCw, MapPin, Crosshair, Target, AlertTriangle, ExternalLink, KeyRound, Menu, ShieldAlert
 } from 'lucide-react';
 
 // =====================================================================
@@ -259,6 +259,10 @@ export const AdminDashboard: React.FC = () => {
   const [savedActivities, setSavedActivities] = useState<string[]>([]);
   const [isRetryingAI, setIsRetryingAI] = useState(false);
   const [retryProgress, setRetryProgress] = useState<{ done: number; total: number } | null>(null);
+  const [liveAnnulStudent, setLiveAnnulStudent] = useState<any | null>(null);
+  const [liveAnnulReason, setLiveAnnulReason] = useState('Flagrado colando pelo professor.');
+  const [liveAnnulExamId, setLiveAnnulExamId] = useState('');
+  const [isDoingLiveAnnul, setIsDoingLiveAnnul] = useState(false);
   
   // Chat e Mensagens
   const [chatSessions, setChatSessions] = useState<any[]>([]);
@@ -690,6 +694,30 @@ export const AdminDashboard: React.FC = () => {
     } finally {
       setIsRetryingAI(false);
       setRetryProgress(null);
+    }
+  };
+
+  // Anula a prova de um aluno em tempo real via active_exam_bans
+  const handleLiveAnnul = async () => {
+    if (!liveAnnulStudent || !liveAnnulExamId || isDoingLiveAnnul) return;
+    setIsDoingLiveAnnul(true);
+    try {
+      const { error } = await supabase.from('active_exam_bans').upsert({
+        student_id: liveAnnulStudent.id,
+        exam_id: liveAnnulExamId,
+        banned_at: new Date().toISOString(),
+        banned_by: student?.email || 'professor',
+        reason: liveAnnulReason.trim() || 'Anulado pelo professor.',
+      }, { onConflict: 'student_id,exam_id' });
+      if (error) throw error;
+      alert(`✅ Anulação enviada para ${liveAnnulStudent.name}. A prova será interrompida no dispositivo dele em instantes.`);
+      setLiveAnnulStudent(null);
+      setLiveAnnulExamId('');
+      setLiveAnnulReason('Flagrado colando pelo professor.');
+    } catch (e: any) {
+      alert('Erro ao anular: ' + e.message);
+    } finally {
+      setIsDoingLiveAnnul(false);
     }
   };
 
@@ -2892,6 +2920,13 @@ export const AdminDashboard: React.FC = () => {
                             >
                                <MessageSquare size={18}/>
                             </button>
+                            <button
+                              onClick={() => { setLiveAnnulStudent(st); setLiveAnnulExamId(''); setLiveAnnulReason('Flagrado colando pelo professor.'); }}
+                              title="Anular prova em andamento"
+                              className="p-2 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                            >
+                              <ShieldAlert size={18}/>
+                            </button>
                             {isSuper && (
                               <button
                                 onClick={() => { setResetPasswordStudent(st); setNewPassword(''); }}
@@ -4894,6 +4929,82 @@ export const AdminDashboard: React.FC = () => {
             >
               {isSavingEditedExam ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
               Salvar Alterações
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Modal: Anular Prova ao Vivo */}
+    {liveAnnulStudent && (
+      <div className="fixed inset-0 z-[400] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setLiveAnnulStudent(null)}>
+        <div className="bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border-2 border-red-500 w-full max-w-md p-8 space-y-5" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center text-white shrink-0">
+              <ShieldAlert size={20}/>
+            </div>
+            <div>
+              <h2 className="font-black text-slate-800 dark:text-white text-base">🚫 Anular Prova ao Vivo</h2>
+              <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">A prova será interrompida imediatamente no dispositivo do aluno</p>
+            </div>
+          </div>
+
+          <div className="bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0">
+              <StudentAvatar studentId={liveAnnulStudent.id} studentName={liveAnnulStudent.name} />
+            </div>
+            <div>
+              <p className="font-black text-slate-800 dark:text-white text-sm">{liveAnnulStudent.name}</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{liveAnnulStudent.grade}ª Série · Turma {liveAnnulStudent.school_class}</p>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Selecione a avaliação</label>
+            <select
+              value={liveAnnulExamId}
+              onChange={e => setLiveAnnulExamId(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-red-400"
+            >
+              <option value="">— Selecione a prova —</option>
+              {publishedExams
+                .filter(ex => String(ex.grade) === String(liveAnnulStudent.grade))
+                .map((ex: any) => (
+                  <option key={ex.id} value={ex.id}>
+                    {ex.title || `Simulado ${ex.bimester}º Bim`} · {ex.grade}ª Série
+                  </option>
+                ))}
+              {publishedEssays
+                .filter(es => String(es.grade) === String(liveAnnulStudent.grade))
+                .map((es: any) => (
+                  <option key={es.id} value={es.id}>
+                    ✍️ {es.title || 'Redação'} · {es.grade}ª Série
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Motivo da anulação</label>
+            <textarea
+              rows={2}
+              value={liveAnnulReason}
+              onChange={e => setLiveAnnulReason(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-red-400 resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => setLiveAnnulStudent(null)} className="flex-1 py-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-sm">
+              Cancelar
+            </button>
+            <button
+              onClick={handleLiveAnnul}
+              disabled={isDoingLiveAnnul || !liveAnnulExamId}
+              className="flex-1 py-3 rounded-2xl bg-red-600 hover:bg-red-700 text-white font-black text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+            >
+              {isDoingLiveAnnul ? <Loader2 size={14} className="animate-spin"/> : <ShieldAlert size={14}/>}
+              Anular Agora
             </button>
           </div>
         </div>
