@@ -313,6 +313,14 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
         alert("E-mail ou senha incorretos. Verifique seus dados ou use 'Esqueceu a senha?'.");
       } else if (msg.includes('already registered') || msg.includes('user already')) {
         alert("Este e-mail já está em uso. Se você já tem uma conta, faça login.");
+      } else if (msg.includes('email rate limit') || msg.includes('rate limit')) {
+        alert(
+          "⚠️ Muitos cadastros ao mesmo tempo.\n\n" +
+          "O sistema de e-mail atingiu o limite por hora. Aguarde cerca de 1 hora e tente novamente.\n\n" +
+          "Dica: se possível, cadastre-se em outro horário ou peça ao professor para tentar mais tarde."
+        );
+      } else if (msg.includes('unable to validate email') || msg.includes('email address') || msg.includes('invalid email')) {
+        alert("E-mail inválido. Verifique se digitou corretamente.");
       } else {
         alert(err.message || "Ocorreu um erro no acesso.");
       }
