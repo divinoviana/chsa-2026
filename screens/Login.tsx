@@ -147,6 +147,32 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
     }
   };
 
+  // Detecta erros de callback OAuth que chegam como parâmetros na URL.
+  // Quando o Supabase não consegue criar/vincular a conta Google (ex.: e-mail
+  // já existe com provider email), ele redireciona de volta com ?error=...
+  // e sem esse handler o aluno só vê a tela de login sem explicação.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('error');
+    const oauthDesc  = params.get('error_description');
+    if (!oauthError) return;
+
+    // Remove os params da URL sem recarregar
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+
+    const desc = (oauthDesc || '').toLowerCase();
+    if (desc.includes('email') || desc.includes('already') || oauthError === 'server_error') {
+      alert(
+        `⚠️ Não foi possível entrar com Google.\n\n` +
+        `Seu e-mail já está cadastrado com usuário e senha.\n\n` +
+        `Use a opção "ou use seu e-mail" abaixo para entrar, ou clique em "🔑 Esqueceu a senha?" se não lembrar a senha.`
+      );
+    } else {
+      alert(`Erro no login com Google: ${oauthDesc || oauthError}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
@@ -210,7 +236,20 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
       };
 
       const { error } = await supabase.from('students').upsert(studentData, { onConflict: 'id' });
-      if (error) throw error;
+
+      if (error) {
+        // Email já existe com outro ID (registro legado sem auth.users correspondente).
+        // Nesse caso o admin precisa executar a migração no banco.
+        if (error.message?.toLowerCase().includes('unique') || error.code === '23505') {
+          alert(
+            `⚠️ Seu e-mail (${googleUserPending.email}) já está cadastrado no sistema com outro ID.\n\n` +
+            `Entre em contato com seu professor para que ele corrija seu cadastro.\n\n` +
+            `Informe ao professor: migração de conta Google necessária para "${googleUserPending.displayName}".`
+          );
+          return;
+        }
+        throw error;
+      }
 
       loginStudent(studentData);
       setGoogleUserPending(null);
@@ -275,6 +314,14 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
         alert("E-mail ou senha incorretos. Verifique seus dados ou use 'Esqueceu a senha?'.");
       } else if (msg.includes('already registered') || msg.includes('user already')) {
         alert("Este e-mail já está em uso. Se você já tem uma conta, faça login.");
+      } else if (msg.includes('email rate limit') || msg.includes('rate limit')) {
+        alert(
+          "⚠️ Muitos cadastros ao mesmo tempo.\n\n" +
+          "O sistema de e-mail atingiu o limite por hora. Aguarde cerca de 1 hora e tente novamente.\n\n" +
+          "Dica: se possível, cadastre-se em outro horário ou peça ao professor para tentar mais tarde."
+        );
+      } else if (msg.includes('unable to validate email') || msg.includes('email address') || msg.includes('invalid email')) {
+        alert("E-mail inválido. Verifique se digitou corretamente.");
       } else {
         alert(err.message || "Ocorreu um erro no acesso.");
       }

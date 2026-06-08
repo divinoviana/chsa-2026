@@ -8,6 +8,7 @@ import { Subject } from '../types';
 import { ArrowLeft, BrainCircuit, CheckCircle2, Clock, Send, Loader2, Award, Info, Lock, AlertTriangle, Pencil, ShieldAlert } from 'lucide-react';
 import { VisualActivityRenderer } from '../components/VisualActivityRenderer';
 import { useIntegrityMonitor, SuspicionBadge } from '../lib/useIntegrityMonitor';
+import { getCurrentPosition, haversineDistance } from '../lib/geo';
 
 // ── Seeded shuffle utilities ──────────────────────────────────────────────────
 function seededRandom(seed: string) {
@@ -393,46 +394,37 @@ export const EvaluationView: React.FC = () => {
         return;
       }
 
-      // ── Geofencing ───────────────────────────────────────────────────────────
-      // Se a escola tem localização cadastrada, o aluno precisa estar no perímetro.
-      try {
-        const { data: locData } = await supabase
-          .from('school_locations')
-          .select('latitude,longitude,radius_meters')
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (locData?.latitude && locData?.longitude && locData?.radius_meters) {
-          const pos: GeolocationPosition = await new Promise((res, rej) =>
-            navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, maximumAge: 60000 })
-          );
-          const R = 6371000;
-          const dLat = (pos.coords.latitude  - locData.latitude)  * Math.PI / 180;
-          const dLon = (pos.coords.longitude - locData.longitude) * Math.PI / 180;
-          const a = Math.sin(dLat/2)**2 +
-            Math.cos(locData.latitude * Math.PI / 180) *
-            Math.cos(pos.coords.latitude * Math.PI / 180) *
-            Math.sin(dLon/2)**2;
-          const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-          if (dist > locData.radius_meters) {
-            alert(`📍 Você está fora do perímetro da escola (${Math.round(dist)} m de distância, limite: ${locData.radius_meters} m).\nEsta avaliação só pode ser realizada presencialmente.`);
-            navigate('/');
-            return;
+      // ── Geofencing (apenas se o professor ativou require_geo) ───────────────
+      if (examData.require_geo) {
+        try {
+          const pos = await getCurrentPosition({ timeoutMs: 10000 });
+          const { data: locData } = await supabase
+            .from('school_locations')
+            .select('latitude,longitude,radius_meters,name')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (locData?.latitude && locData?.longitude && locData?.radius_meters) {
+            const dist = haversineDistance(pos.latitude, pos.longitude, locData.latitude, locData.longitude);
+            if (dist > locData.radius_meters) {
+              alert(
+                `📍 Esta prova exige que você esteja na escola.\n\n` +
+                `Você está a ${Math.round(dist)} m de "${locData.name || 'escola'}".\n` +
+                `Limite permitido: ${locData.radius_meters} m.\n\n` +
+                `Aproxime-se da escola e tente novamente.`
+              );
+              navigate('/');
+              return;
+            }
           }
-        }
-      } catch (geoErr: any) {
-        // GPS negado ou indisponível: bloqueia se a escola tiver localização configurada
-        const { data: hasLoc } = await supabase
-          .from('school_locations')
-          .select('id')
-          .limit(1)
-          .maybeSingle();
-        if (hasLoc) {
-          alert('📍 Habilite a localização no seu dispositivo para realizar esta avaliação presencialmente.');
+        } catch {
+          alert(
+            `📍 Esta prova exige geolocalização, mas não foi possível obter sua localização.\n\n` +
+            `Verifique se o GPS está ativado e permita o acesso à localização no navegador.`
+          );
           navigate('/');
           return;
         }
-        // Sem localização configurada: permite continuar
       }
 
       // ── Anti-conta-dupla ─────────────────────────────────────────────────────
@@ -473,7 +465,6 @@ export const EvaluationView: React.FC = () => {
         setIsAnnulled(true); setAlreadyDone(true); setIsFinished(true);
         setCheckingStatus(false);
         return;
-      }
 
       // Detecta tipo (redação vs simulado) e monta o título esperado da submissão
       const isEssayExam = examData.type === 'essay' || (examData.questions?.[0]?.type === 'essay');

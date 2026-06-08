@@ -309,6 +309,7 @@ export const AdminDashboard: React.FC = () => {
   const [examExpiresAt, setExamExpiresAt] = useState('');
   const [examStartsAt, setExamStartsAt] = useState('');
   const [examHidden, setExamHidden] = useState(false);
+  const [examRequireGeo, setExamRequireGeo] = useState(false);
   const [examQuestionsDraft, setExamQuestionsDraft] = useState<any[]>([]);
   const [examNewQuestion, setExamNewQuestion] = useState<any>({
     type: 'objective',
@@ -327,6 +328,7 @@ export const AdminDashboard: React.FC = () => {
   const [editExamExpiresAt, setEditExamExpiresAt] = useState('');
   const [editExamStartsAt, setEditExamStartsAt] = useState('');
   const [editExamQuestions, setEditExamQuestions] = useState<any[]>([]);
+  const [editExamRequireGeo, setEditExamRequireGeo] = useState(false);
   const [isSavingEditedExam, setIsSavingEditedExam] = useState(false);
   const [editExamTarget, setEditExamTarget] = useState<TargetClassValue>({ mode: 'all', classes: [] });
   const [editExamClassReleases, setEditExamClassReleases] = useState<Record<string, string | null>>({});
@@ -541,10 +543,9 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchSubmissions = async () => {
     try {
-      // Ordena no banco (evita sort JS em 5k+ rows); exclui device_id que não é usado na UI
-      let qb = supabase
-        .from('submissions')
-        .select('id,student_id,student_name,school_class,grade,lesson_id,lesson_title,subject,score,status,submitted_at,submission_date,ai_feedback,teacher_feedback,content')
+      // Exclui content e ai_feedback (jsonb pesados) da listagem; carregados sob demanda no modal.
+      let qb = supabase.from('submissions')
+        .select('id,student_id,student_name,school_class,grade,lesson_id,lesson_title,subject,score,status,submitted_at,submission_date,teacher_feedback')
         .order('submitted_at', { ascending: false, nullsFirst: false });
       if (!isSuper && teacherSubject) qb = qb.eq('subject', teacherSubject);
       const { data, error } = await qb;
@@ -1582,6 +1583,7 @@ export const AdminDashboard: React.FC = () => {
         questions: examQuestionsDraft,
         expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
         starts_at: examHidden ? '2099-01-01T00:00:00Z' : (examStartsAt ? new Date(examStartsAt).toISOString() : null),
+        require_geo: examRequireGeo,
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1622,6 +1624,7 @@ export const AdminDashboard: React.FC = () => {
       setExamExpiresAt('');
       setExamStartsAt('');
       setExamHidden(false);
+      setExamRequireGeo(false);
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar: ' + (e?.message || ''));
@@ -1646,6 +1649,7 @@ export const AdminDashboard: React.FC = () => {
     setEditingPublishedExam(exam);
     setEditExamTitle(exam.title || '');
     setEditExamQuestions(JSON.parse(JSON.stringify(exam.questions || [])));
+    setEditExamRequireGeo(Boolean(exam.require_geo));
     // Converte ISO para formato datetime-local (YYYY-MM-DDTHH:mm)
     if (exam.expires_at) {
       const d = new Date(exam.expires_at);
@@ -1686,6 +1690,7 @@ export const AdminDashboard: React.FC = () => {
           school_class: schoolClassSingle,
           school_classes: schoolClassesArray,
           class_releases: editExamClassReleases,
+          require_geo: editExamRequireGeo,
         })
         .eq('id', editingPublishedExam.id);
       if (error) throw error;
@@ -2151,6 +2156,12 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         <div className="mt-auto p-8 border-t dark:border-slate-800 space-y-2">
+           <a
+             href="#/atividades-adaptadas"
+             className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-fuchsia-500 dark:text-fuchsia-400 hover:bg-fuchsia-50 dark:hover:bg-fuchsia-500/10 hover:translate-x-1 transition-all"
+           >
+             <Sparkles size={18}/> Atividades Adaptadas (PEIs)
+           </a>
            <a
              href="https://sge.seduc.to.pontoid.com.br/Acesso/Entrar?ReturnUrl=%2f"
              target="_blank"
@@ -2844,11 +2855,17 @@ export const AdminDashboard: React.FC = () => {
                                     <div className={`hidden sm:inline-flex items-center px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest shrink-0 ${sub.status === 'pending_ai' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : scoreClass}`}>
                                       {sub.status === 'pending_ai' ? '— / 10' : `${score.toFixed(1)} / 10`}
                                     </div>
-                                    {/* Botão Avaliar */}
+                                    {/* Botão Avaliar — carrega content+ai_feedback sob demanda */}
                                     <button
-                                      onClick={() => {
-                                        setViewingSubmission(sub);
+                                      onClick={async () => {
                                         setManualFeedback(sub.teacher_feedback || '');
+                                        if (sub.content !== undefined) {
+                                          setViewingSubmission(sub);
+                                        } else {
+                                          const { data: full } = await supabase
+                                            .from('submissions').select('*').eq('id', sub.id).maybeSingle();
+                                          setViewingSubmission(full || sub);
+                                        }
                                       }}
                                       className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl text-vibe-purple hover:bg-gradient-vibe hover:text-white hover:border-transparent transition-all cursor-pointer font-black text-[10px] uppercase tracking-widest shrink-0"
                                     >
@@ -3214,6 +3231,32 @@ export const AdminDashboard: React.FC = () => {
                       <span className={`w-4 h-4 bg-white rounded-full shadow transition-all ${examHidden ? 'translate-x-4' : 'translate-x-0'}`}/>
                     </span>
                   </button>
+
+                  {/* Toggle geolocalização */}
+                  <div
+                    onClick={() => setExamRequireGeo(v => !v)}
+                    className={`flex items-center justify-between gap-4 px-5 py-4 rounded-2xl border cursor-pointer transition-all select-none ${
+                      examRequireGeo
+                        ? 'border-tocantins-blue/60 bg-tocantins-blue/5 dark:bg-tocantins-blue/10'
+                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'
+                    }`}
+                  >
+                    <div>
+                      <p className={`text-xs font-black ${examRequireGeo ? 'text-tocantins-blue dark:text-tocantins-yellow' : 'text-slate-600 dark:text-slate-400'}`}>
+                        📍 Exigir localização geográfica
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+                        {examRequireGeo
+                          ? 'Aluno deve estar na escola para responder'
+                          : 'Aluno pode responder de qualquer lugar'}
+                      </p>
+                    </div>
+                    <div className={`w-12 h-6 rounded-full transition-all flex-shrink-0 flex items-center px-1 ${
+                      examRequireGeo ? 'bg-tocantins-blue' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}>
+                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${examRequireGeo ? 'translate-x-6' : 'translate-x-0'}`}/>
+                    </div>
+                  </div>
 
                   <button
                     onClick={handleGenerateExam}
@@ -4908,6 +4951,31 @@ export const AdminDashboard: React.FC = () => {
               </div>
             )}
 
+            {/* Toggle geolocalização */}
+            <div
+              onClick={() => setEditExamRequireGeo(v => !v)}
+              className={`flex items-center justify-between gap-4 px-5 py-4 rounded-2xl border cursor-pointer transition-all select-none ${
+                editExamRequireGeo
+                  ? 'border-tocantins-blue/60 bg-tocantins-blue/5 dark:bg-tocantins-blue/10'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'
+              }`}
+            >
+              <div>
+                <p className={`text-xs font-black ${editExamRequireGeo ? 'text-tocantins-blue dark:text-tocantins-yellow' : 'text-slate-600 dark:text-slate-400'}`}>
+                  📍 Exigir localização geográfica
+                </p>
+                <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+                  {editExamRequireGeo
+                    ? 'Aluno deve estar na escola para responder'
+                    : 'Aluno pode responder de qualquer lugar'}
+                </p>
+              </div>
+              <div className={`w-12 h-6 rounded-full transition-all flex-shrink-0 flex items-center px-1 ${
+                editExamRequireGeo ? 'bg-tocantins-blue' : 'bg-slate-300 dark:bg-slate-600'
+              }`}>
+                <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${editExamRequireGeo ? 'translate-x-6' : 'translate-x-0'}`}/>
+              </div>
+            </div>
             {/* Questões */}
             {editExamQuestions.map((q: any, qi: number) => (
               <div key={qi} className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 space-y-4">

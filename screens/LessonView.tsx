@@ -448,7 +448,7 @@ export const LessonView: React.FC = () => {
         </div>
       </div>
 
-      {student && !(activityExpiresAt && new Date(activityExpiresAt) < new Date()) && (
+      {student && lessonActivity && (lessonActivity.objectives.length > 0 || lessonActivity.discursives.length > 0) && !(activityExpiresAt && new Date(activityExpiresAt) < new Date()) && (
         <SubmissionBar
           studentName={student.name}
           schoolClass={student.school_class}
