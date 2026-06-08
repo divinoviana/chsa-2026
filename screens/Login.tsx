@@ -147,15 +147,40 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
     }
   };
 
+  // Detecta erros de callback OAuth que chegam como parâmetros na URL.
+  // Quando o Supabase não consegue criar/vincular a conta Google (ex.: e-mail
+  // já existe com provider email), ele redireciona de volta com ?error=...
+  // e sem esse handler o aluno só vê a tela de login sem explicação.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('error');
+    const oauthDesc  = params.get('error_description');
+    if (!oauthError) return;
+
+    // Remove os params da URL sem recarregar
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+
+    const desc = (oauthDesc || '').toLowerCase();
+    if (desc.includes('email') || desc.includes('already') || oauthError === 'server_error') {
+      alert(
+        `⚠️ Não foi possível entrar com Google.\n\n` +
+        `Seu e-mail já está cadastrado com usuário e senha.\n\n` +
+        `Use a opção "ou use seu e-mail" abaixo para entrar, ou clique em "🔑 Esqueceu a senha?" se não lembrar a senha.`
+      );
+    } else {
+      alert(`Erro no login com Google: ${oauthDesc || oauthError}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
-      // OAuth via Supabase. Voltamos para a raiz do app — o StudentRoute em
-      // App.tsx redireciona pra /login automaticamente quando o aluno Google
-      // ainda não escolheu série e turma (perfil incompleto).
+      // Redirecionamos para /#/login para que o componente Login.tsx esteja
+      // montado quando a sessão OAuth for processada pelo Supabase JS SDK.
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo: window.location.origin + '/#/login' },
       });
       if (error) throw error;
     } catch (err: any) {
