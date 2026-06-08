@@ -294,6 +294,7 @@ export const AdminDashboard: React.FC = () => {
   const [examTopics, setExamTopics] = useState('');
   const [examTitle, setExamTitle] = useState('');
   const [examExpiresAt, setExamExpiresAt] = useState('');
+  const [examRequireGeo, setExamRequireGeo] = useState(false);
   const [examQuestionsDraft, setExamQuestionsDraft] = useState<any[]>([]);
   const [examNewQuestion, setExamNewQuestion] = useState<any>({
     type: 'objective',
@@ -311,6 +312,7 @@ export const AdminDashboard: React.FC = () => {
   const [editExamTitle, setEditExamTitle] = useState('');
   const [editExamExpiresAt, setEditExamExpiresAt] = useState('');
   const [editExamQuestions, setEditExamQuestions] = useState<any[]>([]);
+  const [editExamRequireGeo, setEditExamRequireGeo] = useState(false);
   const [isSavingEditedExam, setIsSavingEditedExam] = useState(false);
 
   // ── Frequência (Geolocalização) ────────────────
@@ -1323,6 +1325,7 @@ export const AdminDashboard: React.FC = () => {
         topics: examTopics.split(',').map(t => t.trim()).filter(Boolean),
         questions: examQuestionsDraft,
         expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
+        require_geo: examRequireGeo,
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1361,6 +1364,7 @@ export const AdminDashboard: React.FC = () => {
       setExamTitle('');
       setExamTopics('');
       setExamExpiresAt('');
+      setExamRequireGeo(false);
       fetchPublishedExams();
     } catch (e: any) {
       alert('Erro ao publicar: ' + (e?.message || ''));
@@ -1385,6 +1389,7 @@ export const AdminDashboard: React.FC = () => {
     setEditingPublishedExam(exam);
     setEditExamTitle(exam.title || '');
     setEditExamQuestions(JSON.parse(JSON.stringify(exam.questions || [])));
+    setEditExamRequireGeo(Boolean(exam.require_geo));
     // Converte ISO para formato datetime-local (YYYY-MM-DDTHH:mm)
     if (exam.expires_at) {
       const d = new Date(exam.expires_at);
@@ -1406,6 +1411,7 @@ export const AdminDashboard: React.FC = () => {
           title: editExamTitle.trim(),
           questions: editExamQuestions,
           expires_at: editExamExpiresAt ? new Date(editExamExpiresAt).toISOString() : null,
+          require_geo: editExamRequireGeo,
         })
         .eq('id', editingPublishedExam.id);
       if (error) throw error;
@@ -2850,6 +2856,32 @@ export const AdminDashboard: React.FC = () => {
                     )}
                   </div>
 
+                  {/* Toggle geolocalização */}
+                  <div
+                    onClick={() => setExamRequireGeo(v => !v)}
+                    className={`flex items-center justify-between gap-4 px-5 py-4 rounded-2xl border cursor-pointer transition-all select-none ${
+                      examRequireGeo
+                        ? 'border-tocantins-blue/60 bg-tocantins-blue/5 dark:bg-tocantins-blue/10'
+                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'
+                    }`}
+                  >
+                    <div>
+                      <p className={`text-xs font-black ${examRequireGeo ? 'text-tocantins-blue dark:text-tocantins-yellow' : 'text-slate-600 dark:text-slate-400'}`}>
+                        📍 Exigir localização geográfica
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+                        {examRequireGeo
+                          ? 'Aluno deve estar na escola para responder'
+                          : 'Aluno pode responder de qualquer lugar'}
+                      </p>
+                    </div>
+                    <div className={`w-12 h-6 rounded-full transition-all flex-shrink-0 flex items-center px-1 ${
+                      examRequireGeo ? 'bg-tocantins-blue' : 'bg-slate-300 dark:bg-slate-600'
+                    }`}>
+                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${examRequireGeo ? 'translate-x-6' : 'translate-x-0'}`}/>
+                    </div>
+                  </div>
+
                   <button
                     onClick={handleGenerateExam}
                     disabled={isGeneratingExam}
@@ -4281,6 +4313,32 @@ export const AdminDashboard: React.FC = () => {
               {!editExamExpiresAt && editingPublishedExam?.expires_at && (
                 <p className="text-[10px] font-bold text-red-500 mt-1 ml-1">Prazo anterior removido — sem prazo ao salvar.</p>
               )}
+            </div>
+
+            {/* Toggle geolocalização */}
+            <div
+              onClick={() => setEditExamRequireGeo(v => !v)}
+              className={`flex items-center justify-between gap-4 px-5 py-4 rounded-2xl border cursor-pointer transition-all select-none ${
+                editExamRequireGeo
+                  ? 'border-tocantins-blue/60 bg-tocantins-blue/5 dark:bg-tocantins-blue/10'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'
+              }`}
+            >
+              <div>
+                <p className={`text-xs font-black ${editExamRequireGeo ? 'text-tocantins-blue dark:text-tocantins-yellow' : 'text-slate-600 dark:text-slate-400'}`}>
+                  📍 Exigir localização geográfica
+                </p>
+                <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+                  {editExamRequireGeo
+                    ? 'Aluno deve estar na escola para responder'
+                    : 'Aluno pode responder de qualquer lugar'}
+                </p>
+              </div>
+              <div className={`w-12 h-6 rounded-full transition-all flex-shrink-0 flex items-center px-1 ${
+                editExamRequireGeo ? 'bg-tocantins-blue' : 'bg-slate-300 dark:bg-slate-600'
+              }`}>
+                <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${editExamRequireGeo ? 'translate-x-6' : 'translate-x-0'}`}/>
+              </div>
             </div>
 
             {/* Questões */}

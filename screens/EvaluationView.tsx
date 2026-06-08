@@ -7,6 +7,7 @@ import { subjectsInfo } from '../data';
 import { Subject } from '../types';
 import { ArrowLeft, BrainCircuit, CheckCircle2, Clock, Send, Loader2, Award, Info, Lock, AlertTriangle, Pencil, ShieldAlert } from 'lucide-react';
 import { VisualActivityRenderer } from '../components/VisualActivityRenderer';
+import { getCurrentPosition, haversineDistance } from '../lib/geo';
 
 export const EvaluationView: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
@@ -74,6 +75,38 @@ export const EvaluationView: React.FC = () => {
         alert('⏰ O prazo para esta avaliação foi encerrado. Você não pode mais realizá-la.');
         navigate('/');
         return;
+      }
+
+      // Verifica geolocalização (se exigida pelo professor)
+      if (examData.require_geo) {
+        try {
+          const pos = await getCurrentPosition({ timeoutMs: 10000 });
+          const { data: locs } = await supabase
+            .from('school_locations')
+            .select('latitude,longitude,radius_meters,name')
+            .limit(1)
+            .maybeSingle();
+          if (locs) {
+            const dist = haversineDistance(pos.latitude, pos.longitude, locs.latitude, locs.longitude);
+            if (dist > locs.radius_meters) {
+              alert(
+                `📍 Esta prova exige que você esteja na escola.\n\n` +
+                `Você está a ${Math.round(dist)} m de "${locs.name}".\n` +
+                `Limite permitido: ${locs.radius_meters} m.\n\n` +
+                `Aproxime-se da escola e tente novamente.`
+              );
+              navigate('/');
+              return;
+            }
+          }
+        } catch {
+          alert(
+            `📍 Esta prova exige geolocalização, mas não foi possível obter sua localização.\n\n` +
+            `Verifique se o GPS está ativado e permita o acesso à localização no navegador.`
+          );
+          navigate('/');
+          return;
+        }
       }
 
       // Detecta tipo (redação vs simulado) e monta o título esperado da submissão
