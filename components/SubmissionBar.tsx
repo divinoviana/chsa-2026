@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle, Database, Loader2 } from 'lucide-react';
 import { AIResponse, evaluateActivities } from '../services/aiService';
-import { supabase, handleSupabaseError, OperationType } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { Subject } from '../types';
 import { useAuth } from '../context/AuthContext';
 
@@ -97,11 +97,8 @@ export const SubmissionBar: React.FC<Props> = ({
     } catch (error: any) {
       console.error("Erro fatal ao enviar atividade:", error);
       setDbStatus('error');
-      try {
-        handleSupabaseError(error, OperationType.CREATE, 'submissions');
-      } catch (e) {
-        // Ignora re-throw para manter estado de erro no botão
-      }
+      const msg = error instanceof Error ? error.message : String(error);
+      alert(`⚠️ Não foi possível enviar a atividade.\n\nErro: ${msg}\n\nVerifique sua conexão e tente novamente. Se o problema persistir, avise seu professor.`);
     } finally {
       setIsGenerating(false);
     }

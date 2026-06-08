@@ -515,17 +515,15 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchSubmissions = async () => {
     try {
-      let qb = supabase.from('submissions').select('*');
+      // Exclui content e ai_feedback (jsonb pesados, ~10 KB/linha) da listagem.
+      // Esses campos são carregados sob demanda quando o professor abre o modal.
+      let qb = supabase.from('submissions')
+        .select('id,student_id,student_name,school_class,grade,lesson_id,lesson_title,subject,score,status,submitted_at,submission_date,teacher_feedback')
+        .order('submitted_at', { ascending: false, nullsFirst: false });
       if (!isSuper && teacherSubject) qb = qb.eq('subject', teacherSubject);
       const { data, error } = await qb;
       if (error) throw error;
-
-      const list = (data || []).slice().sort((a: any, b: any) => {
-        const ta = new Date(a.submitted_at || a.submission_date || 0).getTime();
-        const tb = new Date(b.submitted_at || b.submission_date || 0).getTime();
-        return tb - ta;
-      });
-      setSubmissions(list);
+      setSubmissions(data || []);
     } catch (e) {
       console.error("Erro ao buscar submissões:", e);
     }
@@ -2521,11 +2519,17 @@ export const AdminDashboard: React.FC = () => {
                                     <div className={`hidden sm:inline-flex items-center px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest shrink-0 ${scoreClass}`}>
                                       {score.toFixed(1)} / 10
                                     </div>
-                                    {/* Botão Avaliar */}
+                                    {/* Botão Avaliar — carrega content+ai_feedback sob demanda */}
                                     <button
-                                      onClick={() => {
-                                        setViewingSubmission(sub);
+                                      onClick={async () => {
                                         setManualFeedback(sub.teacher_feedback || '');
+                                        if (sub.content !== undefined) {
+                                          setViewingSubmission(sub);
+                                        } else {
+                                          const { data: full } = await supabase
+                                            .from('submissions').select('*').eq('id', sub.id).maybeSingle();
+                                          setViewingSubmission(full || sub);
+                                        }
                                       }}
                                       className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl text-vibe-purple hover:bg-gradient-vibe hover:text-white hover:border-transparent transition-all cursor-pointer font-black text-[10px] uppercase tracking-widest shrink-0"
                                     >
