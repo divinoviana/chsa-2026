@@ -222,7 +222,7 @@ export const MyActivities: React.FC = () => {
                           </div>
                         ))}
                       </div>
-                    </details>
+                    </details>}
                   </div>
                 </div>
               </div>
