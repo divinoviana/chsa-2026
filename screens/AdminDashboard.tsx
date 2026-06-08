@@ -1865,6 +1865,12 @@ export const AdminDashboard: React.FC = () => {
 
         <div className="mt-auto p-8 border-t dark:border-slate-800 space-y-2">
            <a
+             href="#/atividades-adaptadas"
+             className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-fuchsia-500 dark:text-fuchsia-400 hover:bg-fuchsia-50 dark:hover:bg-fuchsia-500/10 hover:translate-x-1 transition-all"
+           >
+             <Sparkles size={18}/> Atividades Adaptadas (PEIs)
+           </a>
+           <a
              href="https://sge.seduc.to.pontoid.com.br/Acesso/Entrar?ReturnUrl=%2f"
              target="_blank"
              rel="noopener noreferrer"

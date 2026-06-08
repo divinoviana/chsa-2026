@@ -150,9 +150,6 @@ function AppContent() {
                 <span className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Prof. Divino Viana</span>
               </div>
               <div className="flex flex-col md:items-end gap-2">
-                <Link to="/atividades-adaptadas" className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-vibe rounded-xl text-white text-xs font-bold shadow-glow-purple hover:scale-105 transition">
-                  ✨ Atividades Adaptadas (PEIs)
-                </Link>
                 <Link to="/admin" className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-xl text-white/60 hover:text-white transition-colors text-xs">
                   <Lock className="w-3 h-3" /> Painel Admin
                 </Link>
