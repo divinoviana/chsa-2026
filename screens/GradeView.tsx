@@ -84,7 +84,10 @@ export const GradeView: React.FC = () => {
         : [];
 
       const [actsRes, qsRes, overridesRes] = await Promise.all([
-        supabase.from('activities').select('lesson_id,school_classes,expires_at,starts_at'),
+        // Filtra por lesson_ids da série/matéria — evita scan total de activities
+        allLessonIds.length > 0
+          ? supabase.from('activities').select('lesson_id,school_classes,expires_at,starts_at').in('lesson_id', allLessonIds)
+          : supabase.from('activities').select('lesson_id,school_classes,expires_at,starts_at'),
         supabase.from('questions').select('lesson_id').eq('subject', subjectKey),
         allLessonIds.length > 0
           ? supabase.from('lesson_overrides').select('id, data').in('id', allLessonIds)

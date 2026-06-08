@@ -432,14 +432,17 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     if (!isAuthLoading && (teacherSubject || isSuper)) {
-      fetchQuestionBank();
-      fetchSavedActivities();
-      fetchLessonOverrides();
-      fetchStudents();
-      fetchSubmissions();
-      fetchChatSessions();
-      fetchPublishedExams();
-      fetchSchoolLocation();
+      // Paralelo: todas as 8 buscas iniciais ao mesmo tempo
+      Promise.all([
+        fetchQuestionBank(),
+        fetchSavedActivities(),
+        fetchLessonOverrides(),
+        fetchStudents(),
+        fetchSubmissions(),
+        fetchChatSessions(),
+        fetchPublishedExams(),
+        fetchSchoolLocation(),
+      ]);
     }
   }, [teacherSubject, isSuper, isAuthLoading]);
 
@@ -507,9 +510,11 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchSavedActivities = async () => {
     try {
-      let qb = supabase.from('activities').select('*').order('created_at', { ascending: false });
-      // tabela activities não tem coluna `subject` em todos os modelos; filtra só se admin de matéria
-      const { data, error } = await qb;
+      // Seleciona só os campos necessários para o painel (sem visual_content que pode ser grande)
+      const { data, error } = await supabase
+        .from('activities')
+        .select('id,lesson_id,title,question_ids,expires_at,starts_at,created_at,subject,school_classes')
+        .order('created_at', { ascending: false });
       if (error) throw error;
       const activities = (data || []).filter((a: any) =>
         isSuper || !teacherSubject || a.subject === undefined || a.subject === teacherSubject
@@ -539,17 +544,15 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchSubmissions = async () => {
     try {
-      let qb = supabase.from('submissions').select('*');
+      // Ordena no banco (evita sort JS em 5k+ rows); exclui device_id que não é usado na UI
+      let qb = supabase
+        .from('submissions')
+        .select('id,student_id,student_name,school_class,grade,lesson_id,lesson_title,subject,score,status,submitted_at,submission_date,ai_feedback,teacher_feedback,content')
+        .order('submitted_at', { ascending: false, nullsFirst: false });
       if (!isSuper && teacherSubject) qb = qb.eq('subject', teacherSubject);
       const { data, error } = await qb;
       if (error) throw error;
-
-      const list = (data || []).slice().sort((a: any, b: any) => {
-        const ta = new Date(a.submitted_at || a.submission_date || 0).getTime();
-        const tb = new Date(b.submitted_at || b.submission_date || 0).getTime();
-        return tb - ta;
-      });
-      setSubmissions(list);
+      setSubmissions(data || []);
     } catch (e) {
       console.error("Erro ao buscar submissões:", e);
     }
@@ -572,6 +575,22 @@ export const AdminDashboard: React.FC = () => {
 
       const { evaluateActivities } = await import('../services/aiService');
       const { evaluateEssay } = await import('../services/aiService');
+
+      // Pré-carrega todos os exames necessários em UMA query (evita N+1)
+      const examIds = [...new Set(
+        pending
+          .filter((s: any) => s.ai_feedback?.type !== 'essay_enem')
+          .map((s: any) => s.lesson_id)
+          .filter(Boolean)
+      )];
+      const examMap: Record<string, any> = {};
+      if (examIds.length > 0) {
+        const { data: examsData } = await supabase
+          .from('bimonthly_exams')
+          .select('id,title,bimester,topics,questions')
+          .in('id', examIds);
+        (examsData || []).forEach((e: any) => { examMap[e.id] = e; });
+      }
 
       for (let i = 0; i < pending.length; i++) {
         const sub = pending[i];
@@ -605,12 +624,8 @@ export const AdminDashboard: React.FC = () => {
               status: 'graded',
             }).eq('id', sub.id);
           } else {
-            // Simulado com discursivas
-            const { data: examData } = await supabase
-              .from('bimonthly_exams')
-              .select('title,bimester,topics,questions')
-              .eq('id', sub.lesson_id)
-              .maybeSingle();
+            // Simulado com discursivas — usa cache pré-carregado
+            const examData = examMap[sub.lesson_id] ?? null;
 
             const allQuestions = examData?.questions || [];
             const existingCorrections: any[] = sub.ai_feedback?.corrections || [];
@@ -797,7 +812,7 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchLessonOverrides = async () => {
     try {
-      const { data, error } = await supabase.from('lesson_overrides').select('*');
+      const { data, error } = await supabase.from('lesson_overrides').select('id,data,updated_at');
       if (error) throw error;
       const overrides: Record<string, any> = {};
       (data || []).forEach((row: any) => {

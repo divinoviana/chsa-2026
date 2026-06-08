@@ -164,9 +164,11 @@ export const Home: React.FC = () => {
       // `activities` só tem a coluna `school_classes` (jsonb). Pedir
       // `school_class` (singular) gera erro 400 no PostgREST e zera a
       // contagem de atividades de todas as matérias.
+      // Filtra por lesson_ids da série do aluno — evita scan total das tabelas
+      const lessonIdArr = [...lessonIdsOfMyGrade];
       const [actsRes, qsRes] = await Promise.all([
-        supabase.from('activities').select('lesson_id,school_classes'),
-        supabase.from('questions').select('lesson_id'),
+        supabase.from('activities').select('lesson_id,school_classes').in('lesson_id', lessonIdArr),
+        supabase.from('questions').select('lesson_id').in('lesson_id', lessonIdArr),
       ]);
 
       const lessonIdsWithQuestions = new Set<string>();
