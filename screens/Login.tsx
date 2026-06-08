@@ -210,7 +210,20 @@ export const Login: React.FC<{ adminMode?: boolean }> = ({ adminMode = false }) 
       };
 
       const { error } = await supabase.from('students').upsert(studentData, { onConflict: 'id' });
-      if (error) throw error;
+
+      if (error) {
+        // Email já existe com outro ID (registro legado sem auth.users correspondente).
+        // Nesse caso o admin precisa executar a migração no banco.
+        if (error.message?.toLowerCase().includes('unique') || error.code === '23505') {
+          alert(
+            `⚠️ Seu e-mail (${googleUserPending.email}) já está cadastrado no sistema com outro ID.\n\n` +
+            `Entre em contato com seu professor para que ele corrija seu cadastro.\n\n` +
+            `Informe ao professor: migração de conta Google necessária para "${googleUserPending.displayName}".`
+          );
+          return;
+        }
+        throw error;
+      }
 
       loginStudent(studentData);
       setGoogleUserPending(null);
