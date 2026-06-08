@@ -114,14 +114,16 @@ export const MyActivities: React.FC = () => {
           <div className="space-y-5">
             {submissions.map(sub => {
               const score = Number(sub.score) || 0;
+              const isManualGrade = sub.status === 'manual_grade';
               const isExam = String(sub.lesson_title || '').toLowerCase().includes('avaliação bimestral') || String(sub.lesson_title || '').toLowerCase().includes('simulado');
               const scoreClass = score >= 7 ? 'bg-gradient-fire text-white shadow-glow-orange' : score >= 5 ? 'bg-gradient-aurora text-white shadow-glow-cyan' : 'bg-gradient-sunset text-white shadow-glow-pink';
               return (
-              <div key={sub.id} className={`relative overflow-hidden ${isExam ? 'bg-gradient-fire' : 'bg-gradient-vibe'} p-1 rounded-[32px] shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1`}>
+              <div key={sub.id} className={`relative overflow-hidden ${isManualGrade ? 'bg-gradient-cosmic' : isExam ? 'bg-gradient-fire' : 'bg-gradient-vibe'} p-1 rounded-[32px] shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1`}>
                 <div className="bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden">
                   <div className="p-6 border-b dark:border-slate-800 flex justify-between items-start gap-4 bg-slate-50/40 dark:bg-slate-800/20">
                     <div className="flex-1 min-w-0">
                       {(() => {
+                        if (isManualGrade) return <span className="inline-block bg-gradient-cosmic text-white px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest mb-2">📝 Nota do Professor</span>;
                         const isEssayItem = sub.ai_feedback?.type === 'essay_enem' || String(sub.lesson_title || '').startsWith('Redação:');
                         if (isEssayItem) return <span className="inline-block bg-gradient-fire text-white px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest mb-2">✍️ Redação ENEM</span>;
                         if (isExam) return <span className="inline-block bg-gradient-fire text-white px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest mb-2">🎯 Simulado</span>;
@@ -137,15 +139,17 @@ export const MyActivities: React.FC = () => {
 
                   <div className="p-6 space-y-5">
                     {sub.teacher_feedback && (
-                      <div className="bg-gradient-aurora p-1 rounded-2xl shadow-glow-cyan">
+                      <div className={`${isManualGrade ? 'bg-gradient-cosmic' : 'bg-gradient-aurora'} p-1 rounded-2xl ${isManualGrade ? '' : 'shadow-glow-cyan'}`}>
                         <div className="bg-white dark:bg-slate-900 p-5 rounded-[14px] flex gap-4">
-                          <MessageSquare className="text-vibe-purple shrink-0" size={24}/>
+                          <MessageSquare className={isManualGrade ? 'text-vibe-pink shrink-0' : 'text-vibe-purple shrink-0'} size={24}/>
                           <div className="flex-1">
                             <div className="flex justify-between items-center mb-2 gap-2">
-                               <h4 className="font-black text-slate-700 dark:text-slate-200 text-xs uppercase tracking-widest">💬 Feedback do Professor</h4>
-                               <button onClick={() => handleRedo(sub.lesson_title)} className="flex items-center gap-1.5 bg-gradient-vibe text-white px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 hover:shadow-glow-pink transition-all shadow-md">
-                                 <RotateCcw size={12}/> Refazer
-                               </button>
+                               <h4 className="font-black text-slate-700 dark:text-slate-200 text-xs uppercase tracking-widest">{isManualGrade ? '📝 Observação do Professor' : '💬 Feedback do Professor'}</h4>
+                               {!isManualGrade && (
+                                 <button onClick={() => handleRedo(sub.lesson_title)} className="flex items-center gap-1.5 bg-gradient-vibe text-white px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 hover:shadow-glow-pink transition-all shadow-md">
+                                   <RotateCcw size={12}/> Refazer
+                                 </button>
+                               )}
                             </div>
                             <p className="text-slate-700 dark:text-slate-300 text-sm leading-relaxed italic font-medium">"{sub.teacher_feedback}"</p>
                           </div>
@@ -197,14 +201,16 @@ export const MyActivities: React.FC = () => {
                       </div>
                     )}
 
+                    {!isManualGrade && (
                     <div className="bg-slate-50 dark:bg-slate-800/50 p-5 rounded-2xl border border-slate-200 dark:border-slate-800">
                       <h4 className="font-black text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-2 text-xs uppercase tracking-widest">
                         <Star size={14} className="text-vibe-orange fill-vibe-orange"/> Análise da IA
                       </h4>
                       <p className="text-slate-600 dark:text-slate-400 text-xs italic leading-relaxed">"{sub.ai_feedback?.generalComment || 'Atividade processada com sucesso pelo sistema.'}"</p>
                     </div>
+                    )}
 
-                    <details className="text-sm group">
+                    {!isManualGrade && <details className="text-sm group">
                       <summary className="cursor-pointer font-black text-slate-400 dark:text-slate-500 hover:text-vibe-pink transition-colors flex items-center gap-2 select-none uppercase text-[10px] tracking-[0.25em]">
                          👀 Visualizar respostas
                       </summary>

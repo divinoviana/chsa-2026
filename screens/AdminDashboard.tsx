@@ -263,6 +263,13 @@ export const AdminDashboard: React.FC = () => {
   const [liveAnnulReason, setLiveAnnulReason] = useState('Flagrado colando pelo professor.');
   const [liveAnnulExamId, setLiveAnnulExamId] = useState('');
   const [isDoingLiveAnnul, setIsDoingLiveAnnul] = useState(false);
+
+  // Manual grade entry
+  const [manualGradeStudent, setManualGradeStudent] = useState<any | null>(null);
+  const [manualGradeExamId, setManualGradeExamId] = useState('');
+  const [manualGradeScore, setManualGradeScore] = useState('');
+  const [manualGradeComment, setManualGradeComment] = useState('');
+  const [isSavingManualGrade, setIsSavingManualGrade] = useState(false);
   
   // Chat e Mensagens
   const [chatSessions, setChatSessions] = useState<any[]>([]);
@@ -718,6 +725,47 @@ export const AdminDashboard: React.FC = () => {
       alert('Erro ao anular: ' + e.message);
     } finally {
       setIsDoingLiveAnnul(false);
+    }
+  };
+
+  // Lança nota manual para um estudante (para casos com problema técnico no envio)
+  const handleSaveManualGrade = async () => {
+    if (!manualGradeStudent || !manualGradeExamId || manualGradeScore === '' || isSavingManualGrade) return;
+    const score = parseFloat(manualGradeScore);
+    if (isNaN(score) || score < 0 || score > 10) { alert('Nota inválida. Digite um valor entre 0 e 10.'); return; }
+    setIsSavingManualGrade(true);
+    try {
+      const exam = publishedExams.find((e: any) => e.id === manualGradeExamId);
+      const examTitle = exam ? (exam.title || `Avaliação Bimestral: ${exam.bimester}º Bimestre`) : 'Avaliação';
+      const now = new Date().toISOString();
+      const payload: any = {
+        student_id: manualGradeStudent.id,
+        student_name: manualGradeStudent.name,
+        school_class: manualGradeStudent.school_class,
+        grade: manualGradeStudent.grade,
+        lesson_id: manualGradeExamId,
+        lesson_title: examTitle,
+        subject: exam?.subject || (teacherSubject || 'Geral'),
+        content: [],
+        ai_feedback: { generalComment: 'Nota lançada manualmente pelo professor.' },
+        score,
+        teacher_feedback: manualGradeComment.trim() || 'Nota lançada manualmente pelo professor.',
+        status: 'manual_grade',
+        submitted_at: now,
+        submission_date: now,
+      };
+      const { error } = await supabase.from('submissions').insert(payload);
+      if (error) throw error;
+      alert(`✅ Nota ${score.toFixed(1)} lançada para ${manualGradeStudent.name} com sucesso!`);
+      setManualGradeStudent(null);
+      setManualGradeExamId('');
+      setManualGradeScore('');
+      setManualGradeComment('');
+      fetchSubmissions();
+    } catch (e: any) {
+      alert('Erro ao salvar nota: ' + e.message);
+    } finally {
+      setIsSavingManualGrade(false);
     }
   };
 
@@ -2927,6 +2975,13 @@ export const AdminDashboard: React.FC = () => {
                             >
                               <ShieldAlert size={18}/>
                             </button>
+                            <button
+                              onClick={() => { setManualGradeStudent(st); setManualGradeExamId(''); setManualGradeScore(''); setManualGradeComment(''); }}
+                              title="Lançar nota manual"
+                              className="p-2 text-slate-400 hover:text-vibe-purple transition-colors cursor-pointer"
+                            >
+                              <ClipboardEdit size={18}/>
+                            </button>
                             {isSuper && (
                               <button
                                 onClick={() => { setResetPasswordStudent(st); setNewPassword(''); }}
@@ -5005,6 +5060,95 @@ export const AdminDashboard: React.FC = () => {
             >
               {isDoingLiveAnnul ? <Loader2 size={14} className="animate-spin"/> : <ShieldAlert size={14}/>}
               Anular Agora
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Modal: Nota Manual do Professor */}
+    {manualGradeStudent && (
+      <div className="fixed inset-0 z-[300] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setManualGradeStudent(null)}>
+        <div className="bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border dark:border-slate-800 w-full max-w-sm p-8 space-y-6" onClick={e => e.stopPropagation()}>
+          <div className="text-center">
+            <div className="w-14 h-14 bg-gradient-vibe rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <ClipboardEdit size={28} className="text-white"/>
+            </div>
+            <h3 className="text-lg font-black text-slate-800 dark:text-white tracking-tight">Lançar Nota Manual</h3>
+            <p className="text-xs text-slate-400 mt-1 font-bold uppercase tracking-widest">{manualGradeStudent.name}</p>
+          </div>
+
+          <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4">
+            <div className="w-14 h-14 rounded-2xl overflow-hidden shadow-md shrink-0">
+              <StudentAvatar studentId={manualGradeStudent.id} studentName={manualGradeStudent.name} />
+            </div>
+            <div>
+              <p className="font-black text-slate-800 dark:text-white text-sm">{manualGradeStudent.name}</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{manualGradeStudent.grade}ª Série · Turma {manualGradeStudent.school_class}</p>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Selecione a avaliação</label>
+            <select
+              value={manualGradeExamId}
+              onChange={e => setManualGradeExamId(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+            >
+              <option value="">— Selecione a avaliação —</option>
+              {publishedExams
+                .filter(ex => String(ex.grade) === String(manualGradeStudent.grade))
+                .map((ex: any) => (
+                  <option key={ex.id} value={ex.id}>
+                    {ex.title || `Simulado ${ex.bimester}º Bim`} · {ex.grade}ª Série
+                  </option>
+                ))}
+              {publishedEssays
+                .filter(es => String(es.grade) === String(manualGradeStudent.grade))
+                .map((es: any) => (
+                  <option key={es.id} value={es.id}>
+                    ✍️ {es.title || 'Redação'} · {es.grade}ª Série
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Nota (0 – 10)</label>
+            <input
+              type="number"
+              min="0"
+              max="10"
+              step="0.1"
+              placeholder="Ex: 8.5"
+              value={manualGradeScore}
+              onChange={e => setManualGradeScore(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple"
+            />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1 block">Observação (opcional)</label>
+            <textarea
+              rows={2}
+              placeholder="Ex: Estudante apresentou print do erro no envio."
+              value={manualGradeComment}
+              onChange={e => setManualGradeComment(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-4 py-3 text-sm text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-vibe-purple resize-none"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => setManualGradeStudent(null)} className="flex-1 py-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-sm">
+              Cancelar
+            </button>
+            <button
+              onClick={handleSaveManualGrade}
+              disabled={isSavingManualGrade || !manualGradeExamId || manualGradeScore === ''}
+              className="flex-1 py-3 rounded-2xl bg-gradient-vibe text-white font-black text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all hover:shadow-glow-purple"
+            >
+              {isSavingManualGrade ? <Loader2 size={14} className="animate-spin"/> : <ClipboardEdit size={14}/>}
+              Lançar Nota
             </button>
           </div>
         </div>
