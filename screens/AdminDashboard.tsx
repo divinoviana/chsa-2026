@@ -1816,9 +1816,13 @@ export const AdminDashboard: React.FC = () => {
       : (String(viewingSubmission.lesson_title || '').toLowerCase().includes('simulado') || String(viewingSubmission.lesson_title || '').toLowerCase().includes('avaliação bimestral'))
         ? 'o simulado'
         : 'a atividade';
+    const isAnnulled = viewingSubmission.status === 'annulled';
     const ok = confirm(
-      `Pedir para ${viewingSubmission.student_name} refazer ${tipo} "${viewingSubmission.lesson_title}"?\n\n` +
-      `⚠️ A entrega atual (nota, respostas e feedback) será REMOVIDA e o aluno poderá fazer tudo de novo do zero.\n\n` +
+      `Liberar refazimento para ${viewingSubmission.student_name}?\n` +
+      `"${viewingSubmission.lesson_title}"\n\n` +
+      (isAnnulled
+        ? `⚠️ Esta prova estava ANULADA. Ao confirmar, o bloqueio será removido e o aluno poderá refazê-la normalmente.\n\n`
+        : `⚠️ A entrega atual (nota, respostas e feedback) será REMOVIDA e o aluno poderá fazer tudo de novo do zero.\n\n`) +
       `Avise o aluno — não há notificação automática. Esta ação não pode ser desfeita.`
     );
     if (!ok) return;
@@ -1829,7 +1833,7 @@ export const AdminDashboard: React.FC = () => {
         .delete()
         .eq('id', viewingSubmission.id);
       if (error) throw error;
-      alert(`Pronto! ${viewingSubmission.student_name} já pode refazer "${viewingSubmission.lesson_title}".`);
+      alert(`✅ Feito! ${viewingSubmission.student_name} já pode refazer "${viewingSubmission.lesson_title}".\n\nPeça para o aluno abrir a avaliação normalmente — o sistema detectará a liberação automaticamente.`);
       setViewingSubmission(null);
       fetchSubmissions();
     } catch (e: any) {

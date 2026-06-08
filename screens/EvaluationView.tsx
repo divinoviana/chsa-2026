@@ -323,14 +323,29 @@ export const EvaluationView: React.FC = () => {
     if (!examId || !student) return;
     setCheckingStatus(true);
 
-    // Verificação local imediata — cobre race condition do insert async
+    // Verificação local imediata — cobre race condition do insert async.
+    // Se o professor liberou refazimento (deletou a submissão anulada),
+    // o banco não tem mais o registro e o localStorage precisa ser ignorado.
     try {
       if (localStorage.getItem(`annulled_${student.id}_${examId}`)) {
-        setIsAnnulled(true);
-        setAlreadyDone(true);
-        setIsFinished(true);
-        setCheckingStatus(false);
-        return;
+        const { data: stillAnnulled } = await supabase
+          .from('submissions')
+          .select('id')
+          .eq('student_id', student.id)
+          .eq('lesson_id', examId)
+          .eq('status', 'annulled')
+          .limit(1)
+          .maybeSingle();
+        if (stillAnnulled) {
+          // Ainda anulado no banco — bloqueia normalmente
+          setIsAnnulled(true);
+          setAlreadyDone(true);
+          setIsFinished(true);
+          setCheckingStatus(false);
+          return;
+        }
+        // Professor liberou o refazimento (registro deletado) — limpa e continua
+        try { localStorage.removeItem(`annulled_${student.id}_${examId}`); } catch(_e2) {}
       }
     } catch(_e) {}
 
