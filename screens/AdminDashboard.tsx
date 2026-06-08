@@ -510,15 +510,12 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchSavedActivities = async () => {
     try {
-      // Seleciona só os campos necessários para o painel (sem visual_content que pode ser grande)
       const { data, error } = await supabase
         .from('activities')
-        .select('id,lesson_id,title,question_ids,expires_at,starts_at,created_at,subject,school_classes')
+        .select('id,lesson_id,title,visual_content,expires_at,starts_at,created_at,school_classes')
         .order('created_at', { ascending: false });
       if (error) throw error;
-      const activities = (data || []).filter((a: any) =>
-        isSuper || !teacherSubject || a.subject === undefined || a.subject === teacherSubject
-      );
+      const activities = (data || []);
       setActivityBank(activities);
       setSavedActivities(activities.map((a: any) => a.lesson_id).filter(Boolean));
     } catch (e) {
@@ -1977,13 +1974,13 @@ export const AdminDashboard: React.FC = () => {
     return Object.values(map).sort((a: any, b: any) => a.name.localeCompare(b.name, 'pt-BR'));
   }, [submissions, students, filterClass, filterGrade, filterSubject, lessonToBimesterMap]);
 
-  // Sincroniza o modal aberto com gradeData após qualquer atualização de submissões
-  // (ex.: nota manual inserida → fetchSubmissions() → gradeData recomputa → modal atualiza)
+  // Sincroniza o modal aberto com studentsWithSubmissions após qualquer atualização
+  // (ex.: nota manual inserida → fetchSubmissions() → studentsWithSubmissions recomputa → modal atualiza)
   useEffect(() => {
     if (!selectedStudentEval) return;
-    const updated = (gradeData as any[]).find((s: any) => s.id === selectedStudentEval.id);
+    const updated = studentsWithSubmissions.find((s: any) => s.id === selectedStudentEval.id);
     if (updated) setSelectedStudentEval(updated);
-  }, [gradeData]);
+  }, [studentsWithSubmissions]);
 
   // Turmas disponíveis: filtra null/admin, e quando uma série está selecionada
   // mostra apenas as turmas daquela série (ex.: filtro 1ª → só 13.xx).

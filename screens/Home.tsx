@@ -166,6 +166,10 @@ export const Home: React.FC = () => {
       // contagem de atividades de todas as matérias.
       // Filtra por lesson_ids da série do aluno — evita scan total das tabelas
       const lessonIdArr = [...lessonIdsOfMyGrade];
+      if (lessonIdArr.length === 0) {
+        setPublishedCountBySubject({});
+        return;
+      }
       const [actsRes, qsRes] = await Promise.all([
         supabase.from('activities').select('lesson_id,school_classes').in('lesson_id', lessonIdArr),
         supabase.from('questions').select('lesson_id').in('lesson_id', lessonIdArr),
