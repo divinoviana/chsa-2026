@@ -1967,6 +1967,7 @@ export const AdminDashboard: React.FC = () => {
           title: sub.lesson_title,
           subject: sub.subject,
           score: sub.score,
+          status: sub.status,
           bimester,
           isExam: String(sub.lesson_title || '').toLowerCase().includes('avaliação bimestral') || String(sub.lesson_title || '').toLowerCase().includes('simulado'),
           date: sub.submitted_at || sub.submission_date,
@@ -1975,6 +1976,14 @@ export const AdminDashboard: React.FC = () => {
 
     return Object.values(map).sort((a: any, b: any) => a.name.localeCompare(b.name, 'pt-BR'));
   }, [submissions, students, filterClass, filterGrade, filterSubject, lessonToBimesterMap]);
+
+  // Sincroniza o modal aberto com gradeData após qualquer atualização de submissões
+  // (ex.: nota manual inserida → fetchSubmissions() → gradeData recomputa → modal atualiza)
+  useEffect(() => {
+    if (!selectedStudentEval) return;
+    const updated = (gradeData as any[]).find((s: any) => s.id === selectedStudentEval.id);
+    if (updated) setSelectedStudentEval(updated);
+  }, [gradeData]);
 
   // Turmas disponíveis: filtra null/admin, e quando uma série está selecionada
   // mostra apenas as turmas daquela série (ex.: filtro 1ª → só 13.xx).
@@ -4506,30 +4515,37 @@ export const AdminDashboard: React.FC = () => {
                     <div className="space-y-3">
                        {[...selectedStudentEval.activities]
                          .sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
-                         .map((act: any, idx: number) => (
-                         <div key={idx} className={`p-4 rounded-2xl border flex justify-between items-center group transition-all ${act.isExam ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/30 hover:border-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-tocantins-blue/30'}`}>
-                            <div className="flex-1 flex items-center gap-3">
-                               {act.isExam && (
-                                 <span className="px-2 py-1 bg-amber-500 text-white rounded text-[8px] font-black uppercase tracking-widest shrink-0">
-                                   Simulado
-                                 </span>
-                               )}
-                               <div className="min-w-0">
-                                 <p className="font-bold text-slate-700 dark:text-slate-100 text-sm leading-tight truncate">{act.title}</p>
-                                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                                   {act.bimester}º Bimestre
-                                   {act.subject && ` • ${act.subject}`}
-                                   {act.date && ` • ${new Date(act.date).toLocaleDateString('pt-BR')}`}
-                                 </span>
-                               </div>
-                            </div>
-                            <div className="text-right shrink-0 ml-3">
-                               <div className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-black ${act.isExam ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-blue-50 dark:bg-blue-900/20 text-tocantins-blue dark:text-tocantins-yellow'}`}>
-                                 {Number(act.score || 0).toFixed(1)}
-                               </div>
-                            </div>
-                         </div>
-                       ))}
+                         .map((act: any, idx: number) => {
+                           const isManual = act.status === 'manual_grade';
+                           return (
+                           <div key={idx} className={`p-4 rounded-2xl border flex justify-between items-center group transition-all ${isManual ? 'bg-purple-50 dark:bg-purple-900/10 border-purple-200 dark:border-purple-800/30' : act.isExam ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/30 hover:border-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-tocantins-blue/30'}`}>
+                              <div className="flex-1 flex items-center gap-3">
+                                 {isManual && (
+                                   <span className="px-2 py-1 bg-vibe-purple text-white rounded text-[8px] font-black uppercase tracking-widest shrink-0">
+                                     📝 Prof
+                                   </span>
+                                 )}
+                                 {!isManual && act.isExam && (
+                                   <span className="px-2 py-1 bg-amber-500 text-white rounded text-[8px] font-black uppercase tracking-widest shrink-0">
+                                     Simulado
+                                   </span>
+                                 )}
+                                 <div className="min-w-0">
+                                   <p className="font-bold text-slate-700 dark:text-slate-100 text-sm leading-tight truncate">{act.title}</p>
+                                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                     {act.bimester}º Bimestre
+                                     {act.subject && ` • ${act.subject}`}
+                                     {act.date && ` • ${new Date(act.date).toLocaleDateString('pt-BR')}`}
+                                   </span>
+                                 </div>
+                              </div>
+                              <div className="text-right shrink-0 ml-3">
+                                 <div className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-black ${isManual ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' : act.isExam ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-blue-50 dark:bg-blue-900/20 text-tocantins-blue dark:text-tocantins-yellow'}`}>
+                                   {Number(act.score || 0).toFixed(1)}
+                                 </div>
+                              </div>
+                           </div>
+                         );})}
                        {selectedStudentEval.activities.length === 0 && (
                          <p className="text-center py-8 text-slate-400 font-bold text-xs">Nenhum registro encontrado.</p>
                        )}
