@@ -2118,6 +2118,133 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [filterGrade, filterClass]);
 
+  const handleDownloadLesson = async (lesson: any, includeActivity = false) => {
+    setLoading(true);
+    try {
+      const override = lessonOverrides[lesson.id];
+      const title = override?.title || lesson.title;
+      const rawTheory: string = override?.theory || lesson.theory || '';
+
+      // Strip Markdown para texto limpo no PDF
+      const stripMd = (md: string) =>
+        md
+          .replace(/^#{1,6}\s+/gm, '')
+          .replace(/\*\*(.+?)\*\*/g, '$1')
+          .replace(/\*(.+?)\*/g, '$1')
+          .replace(/`{1,3}[^`]*`{1,3}/g, '')
+          .replace(/!\[.*?\]\(.*?\)/g, '')
+          .replace(/\[(.+?)\]\(.*?\)/g, '$1')
+          .replace(/^[-*+]\s+/gm, '• ')
+          .replace(/^\d+\.\s+/gm, (m) => m)
+          .replace(/^>\s+/gm, '')
+          .replace(/---+/g, '')
+          .trim();
+
+      const theoryClean = stripMd(rawTheory);
+
+      const { default: jsPDF } = await import('jspdf');
+      const doc = new jsPDF();
+      const pageW = doc.internal.pageSize.getWidth();
+      const marginL = 20, marginR = 20, lineW = pageW - marginL - marginR;
+      let y = 20;
+
+      const addText = (text: string, size: number, style: 'bold'|'normal', lineH: number, color = [30, 30, 30]) => {
+        doc.setFontSize(size);
+        doc.setFont('helvetica', style);
+        doc.setTextColor(color[0], color[1], color[2]);
+        const lines = doc.splitTextToSize(text, lineW);
+        lines.forEach((line: string) => {
+          if (y > 275) { doc.addPage(); y = 20; }
+          doc.text(line, marginL, y);
+          y += lineH;
+        });
+      };
+
+      const subjectName = subjectsInfo[lesson.subject as Subject]?.name || lesson.subject || '';
+
+      // Cabeçalho
+      addText('PORTAL DE CIÊNCIAS HUMANAS — TOCANTINS', 8, 'normal', 5, [150, 150, 150]);
+      y += 3;
+      addText(subjectName.toUpperCase(), 10, 'bold', 6, [80, 80, 80]);
+      y += 2;
+      addText(title, 16, 'bold', 9, [20, 20, 20]);
+      y += 4;
+
+      // Separador
+      doc.setDrawColor(200, 200, 200);
+      doc.line(marginL, y, pageW - marginR, y);
+      y += 8;
+
+      if (theoryClean) {
+        addText('FUNDAMENTAÇÃO TEÓRICA', 9, 'bold', 6, [80, 80, 80]);
+        y += 3;
+
+        // Quebra o texto em parágrafos preservando a leitura
+        const paragraphs = theoryClean.split(/\n{2,}/).filter(Boolean);
+        paragraphs.forEach(para => {
+          addText(para.replace(/\n/g, ' '), 10, 'normal', 6);
+          y += 3;
+        });
+      }
+
+      if (includeActivity) {
+        const { data: questions } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('lesson_id', lesson.id)
+          .order('created_at');
+
+        if (questions && questions.length > 0) {
+          y += 4;
+          doc.setDrawColor(200, 200, 200);
+          doc.line(marginL, y, pageW - marginR, y);
+          y += 8;
+          addText('ATIVIDADE DE FIXAÇÃO', 9, 'bold', 6, [80, 80, 80]);
+          y += 3;
+
+          questions.forEach((q: any, i: number) => {
+            if (y > 265) { doc.addPage(); y = 20; }
+            addText(`${i + 1}. ${q.question_text}`, 10, 'bold', 6);
+            if (q.type === 'objective' && q.options) {
+              ['a','b','c','d','e'].forEach(k => {
+                if (q.options[k]) {
+                  doc.setFont('helvetica', 'normal');
+                  doc.setFontSize(9);
+                  const opts = doc.splitTextToSize(`${k.toUpperCase()}) ${q.options[k]}`, lineW - 8);
+                  opts.forEach((ol: string) => {
+                    if (y > 275) { doc.addPage(); y = 20; }
+                    doc.text(ol, marginL + 6, y);
+                    y += 5.5;
+                  });
+                }
+              });
+            }
+            y += 4;
+          });
+        }
+      }
+
+      // Rodapé em todas as páginas
+      const totalPages = (doc.internal as any).getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(180, 180, 180);
+        doc.text(`Prof. Divino Viana · ${subjectName} · ${new Date().toLocaleDateString('pt-BR')}`, marginL, 290);
+        doc.text(`${p}/${totalPages}`, pageW - marginR, 290, { align: 'right' });
+      }
+
+      const safeName = title.replace(/[^a-zA-Z0-9À-ÿ\s]/g, '').replace(/\s+/g, '_');
+      doc.save(`${includeActivity ? 'Aula_Completa' : 'Teoria'}_${safeName}.pdf`);
+    } catch (e: any) {
+      console.error('Erro ao exportar aula:', e);
+      alert('Erro ao exportar: ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDownloadActivity = async (lesson: any) => {
     setLoading(true);
     try {
@@ -2488,24 +2615,52 @@ export const AdminDashboard: React.FC = () => {
                                                 </div>
                                               </div>
 
-                                              {hasActivity && (
-                                                <div className="mt-3 pt-3 border-t border-dashed dark:border-slate-700 flex items-center justify-between">
-                                                  <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1">
-                                                    <Save size={10}/> Publicada
+                                              {(hasTheory || hasActivity) && (
+                                                <div className="mt-3 pt-3 border-t border-dashed dark:border-slate-700 flex items-center justify-between gap-2">
+                                                  <span className="text-[9px] font-black uppercase tracking-widest flex items-center gap-1 shrink-0">
+                                                    {hasActivity && hasTheory
+                                                      ? <span className="text-vibe-purple flex items-center gap-1"><CheckCircle2 size={10}/> Completa</span>
+                                                      : hasActivity
+                                                      ? <span className="text-emerald-500 flex items-center gap-1"><Save size={10}/> Atividade</span>
+                                                      : <span className="text-tocantins-blue flex items-center gap-1"><Presentation size={10}/> Teoria</span>
+                                                    }
                                                   </span>
-                                                  <div className="flex gap-2">
-                                                    <button
-                                                      onClick={() => handleDownloadActivity(lesson)}
-                                                      className="text-[9px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 uppercase tracking-widest transition-all"
-                                                    >
-                                                      Exportar
-                                                    </button>
-                                                    <button
-                                                      onClick={() => handleDeleteActivity(lesson.id)}
-                                                      className="text-[9px] font-bold text-red-500 hover:text-red-700 uppercase tracking-widest transition-all"
-                                                    >
-                                                      Limpar
-                                                    </button>
+                                                  <div className="flex gap-1 flex-wrap justify-end">
+                                                    {hasTheory && (
+                                                      <button
+                                                        onClick={() => handleDownloadLesson(lesson, false)}
+                                                        title="Exportar só a teoria"
+                                                        className="text-[9px] font-bold text-tocantins-blue hover:text-tocantins-blue/70 uppercase tracking-widest transition-all flex items-center gap-1"
+                                                      >
+                                                        <Download size={9}/> Teoria
+                                                      </button>
+                                                    )}
+                                                    {hasActivity && (
+                                                      <button
+                                                        onClick={() => handleDownloadActivity(lesson)}
+                                                        title="Exportar só as questões"
+                                                        className="text-[9px] font-bold text-emerald-600 hover:text-emerald-800 uppercase tracking-widest transition-all flex items-center gap-1"
+                                                      >
+                                                        <Download size={9}/> Questões
+                                                      </button>
+                                                    )}
+                                                    {hasTheory && hasActivity && (
+                                                      <button
+                                                        onClick={() => handleDownloadLesson(lesson, true)}
+                                                        title="Exportar aula completa (teoria + questões)"
+                                                        className="text-[9px] font-bold text-vibe-purple hover:text-vibe-pink uppercase tracking-widest transition-all flex items-center gap-1"
+                                                      >
+                                                        <Download size={9}/> Completa
+                                                      </button>
+                                                    )}
+                                                    {hasActivity && (
+                                                      <button
+                                                        onClick={() => handleDeleteActivity(lesson.id)}
+                                                        className="text-[9px] font-bold text-red-400 hover:text-red-600 uppercase tracking-widest transition-all"
+                                                      >
+                                                        Limpar
+                                                      </button>
+                                                    )}
                                                   </div>
                                                 </div>
                                               )}
@@ -4167,21 +4322,31 @@ export const AdminDashboard: React.FC = () => {
                  </div>
               </div>
 
-              <div className="p-8 bg-slate-50 dark:bg-slate-800/50 border-t dark:border-slate-800 flex justify-end gap-3">
-                  <button 
-                    onClick={() => setIsLessonEditorOpen(false)}
-                    className="px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+              <div className="p-8 bg-slate-50 dark:bg-slate-800/50 border-t dark:border-slate-800 flex flex-wrap justify-between items-center gap-3">
+                  <button
+                    onClick={() => selectedLessonForEdit && handleDownloadLesson(selectedLessonForEdit, false)}
+                    disabled={!lessonTheoryDraft.trim()}
+                    className="px-6 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center gap-2 disabled:opacity-30"
+                    title="Exportar teoria atual como PDF"
                   >
-                    Descartar
+                    <Download size={14}/> Exportar PDF
                   </button>
-                  <button 
-                    onClick={handleSaveLessonOverride}
-                    disabled={isSavingLesson}
-                    className="px-10 py-4 bg-tocantins-blue dark:bg-tocantins-yellow text-white dark:text-slate-950 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-500/20 dark:shadow-none hover:scale-105 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                  >
-                    {isSavingLesson ? <Loader2 className="animate-spin" size={14}/> : <Save size={14}/>}
-                    Confirmar e Salvar
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setIsLessonEditorOpen(false)}
+                      className="px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                    >
+                      Descartar
+                    </button>
+                    <button
+                      onClick={handleSaveLessonOverride}
+                      disabled={isSavingLesson}
+                      className="px-10 py-4 bg-tocantins-blue dark:bg-tocantins-yellow text-white dark:text-slate-950 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-500/20 dark:shadow-none hover:scale-105 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingLesson ? <Loader2 className="animate-spin" size={14}/> : <Save size={14}/>}
+                      Confirmar e Salvar
+                    </button>
+                  </div>
               </div>
            </div>
         </div>
