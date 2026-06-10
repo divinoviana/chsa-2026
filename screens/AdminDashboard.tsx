@@ -289,6 +289,8 @@ export const AdminDashboard: React.FC = () => {
   const [lessonTitleDraft, setLessonTitleDraft] = useState('');
   const [lessonTheoryDraft, setLessonTheoryDraft] = useState('');
   const [isSavingLesson, setIsSavingLesson] = useState(false);
+  const [isGeneratingTheory, setIsGeneratingTheory] = useState(false);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   
   // Editor de Atividades (Questões)
   const [activityQuestionsDraft, setActivityQuestionsDraft] = useState<any[]>([]);
@@ -1038,6 +1040,98 @@ export const AdminDashboard: React.FC = () => {
       handleSupabaseError(e, OperationType.UPDATE, 'lesson_overrides');
     } finally {
       setIsSavingLesson(false);
+    }
+  };
+
+  const handleGenerateTheory = async () => {
+    if (!selectedLessonForEdit) return;
+    if (lessonTheoryDraft.trim() && !confirm('O campo de teoria já tem conteúdo. Substituir pelo gerado pela IA?')) return;
+    setIsGeneratingTheory(true);
+    try {
+      const { generateLessonPlan } = await import('../services/aiService');
+      const subject = teacherSubject || selectedLessonForEdit.subject || 'Ciências Humanas';
+      const grade = String(selectedLessonForEdit.id || '').charAt(0) || '1';
+      const plan = await generateLessonPlan(subject, lessonTitleDraft || selectedLessonForEdit.title, grade);
+      setLessonTheoryDraft(plan.theory || '');
+      if (!lessonTitleDraft.trim() && plan.title) setLessonTitleDraft(plan.title);
+    } catch (e: any) {
+      alert('Erro ao gerar com IA: ' + (e?.message || 'Tente novamente.'));
+    } finally {
+      setIsGeneratingTheory(false);
+    }
+  };
+
+  const handleGenerateActivityQuestions = async () => {
+    if (!selectedLessonForEdit) return;
+    if (activityQuestionsDraft.length > 0 && !confirm(`Já existem ${activityQuestionsDraft.length} questão(ões) nesta atividade. A IA vai adicionar mais questões sem remover as existentes. Continuar?`)) return;
+    setIsGeneratingQuestions(true);
+    try {
+      const { generateLessonActivity } = await import('../services/aiService');
+      const override = lessonOverrides[selectedLessonForEdit.id];
+      const theory = override?.theory || selectedLessonForEdit?.theory || lessonTheoryDraft || '';
+      const activity = await generateLessonActivity(selectedLessonForEdit.title, theory);
+
+      const base = {
+        subject: selectedLessonForEdit.subject,
+        topic: selectedLessonForEdit.title,
+        lesson_id: selectedLessonForEdit.id,
+        difficulty: 'Médio',
+        explanation: '',
+      };
+
+      const toInsert: any[] = [
+        ...(activity.objectives || []).map((q: any) => ({
+          ...base,
+          type: 'objective',
+          question_text: q.question,
+          options: q.options,
+          correct_option: q.correctOption,
+        })),
+        ...(activity.discursives || []).map((q: any) => ({
+          ...base,
+          type: 'discursive',
+          question_text: q.question,
+          options: null,
+          correct_option: null,
+        })),
+      ];
+
+      if (toInsert.length === 0) { alert('A IA não retornou questões. Tente novamente.'); return; }
+
+      const { data: inserted, error } = await supabase
+        .from('questions')
+        .insert(toInsert)
+        .select('*');
+      if (error) throw error;
+
+      // Cria vínculo na tabela activities se ainda não existe
+      if (!savedActivities.includes(selectedLessonForEdit.id)) {
+        const actPayload: any = {
+          lesson_id: selectedLessonForEdit.id,
+          title: `Atividade: ${selectedLessonForEdit.title}`,
+        };
+        if (activityTarget.mode === 'single' && activityTarget.classes[0]) actPayload.school_classes = [activityTarget.classes[0]];
+        if (activityTarget.mode === 'multi' && activityTarget.classes.length > 0) actPayload.school_classes = activityTarget.classes;
+        if (activityExpiresAt) actPayload.expires_at = new Date(activityExpiresAt).toISOString();
+        if (activityStartsAt) actPayload.starts_at = new Date(activityStartsAt).toISOString();
+        let lastErr: any = null;
+        for (let i = 0; i < 4; i++) {
+          const r = await supabase.from('activities').insert(actPayload);
+          if (!r.error) { lastErr = null; break; }
+          lastErr = r.error;
+          const m = String(r.error.message || '').match(/'([^']+)' column of/i);
+          const miss = m?.[1];
+          if (miss && (miss in actPayload)) { delete actPayload[miss]; } else break;
+        }
+        if (!lastErr) fetchSavedActivities();
+      }
+
+      setActivityQuestionsDraft(prev => [...prev, ...(inserted || [])]);
+      alert(`✅ ${inserted?.length || 0} questão(ões) gerada(s) pela IA e adicionadas à atividade!`);
+    } catch (e: any) {
+      alert('Erro ao gerar com IA: ' + (e?.message || 'Tente novamente.'));
+    } finally {
+      setIsGeneratingQuestions(false);
     }
   };
 
@@ -4052,11 +4146,22 @@ export const AdminDashboard: React.FC = () => {
                     />
                  </div>
                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase ml-4 tracking-widest">Fundamentação Teórica (Markdown)</label>
-                    <textarea 
+                    <div className="flex items-center justify-between ml-4 mr-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fundamentação Teórica (Markdown)</label>
+                      <button
+                        type="button"
+                        onClick={handleGenerateTheory}
+                        disabled={isGeneratingTheory}
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-vibe text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all disabled:opacity-50 shadow-glow-purple"
+                      >
+                        {isGeneratingTheory ? <Loader2 className="animate-spin" size={13}/> : <Sparkles size={13}/>}
+                        {isGeneratingTheory ? 'Gerando...' : 'Gerar com IA'}
+                      </button>
+                    </div>
+                    <textarea
                       value={lessonTheoryDraft}
                       onChange={e => setLessonTheoryDraft(e.target.value)}
-                      placeholder="Insira o texto base para estudo..."
+                      placeholder="Escreva ou clique em &quot;Gerar com IA&quot; para preencher automaticamente…"
                       className="w-full h-80 bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-[32px] px-8 py-6 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10 transition-all resize-none leading-relaxed"
                     />
                  </div>
@@ -4182,6 +4287,23 @@ export const AdminDashboard: React.FC = () => {
                     <h4 className="text-[10px] font-black text-tocantins-blue dark:text-tocantins-yellow uppercase tracking-widest flex items-center gap-2">
                        <Wand2 size={14}/> Cadastrar Novo Item
                     </h4>
+
+                    {/* Botão Gerar com IA */}
+                    <button
+                      type="button"
+                      onClick={handleGenerateActivityQuestions}
+                      disabled={isGeneratingQuestions}
+                      className="w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-vibe text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 shadow-glow-purple"
+                    >
+                      {isGeneratingQuestions ? <Loader2 className="animate-spin" size={14}/> : <Sparkles size={14}/>}
+                      {isGeneratingQuestions ? 'Gerando questões...' : '✨ Sugerir questões com IA (5 obj + 2 disc)'}
+                    </button>
+
+                    <div className="flex items-center gap-3 my-1">
+                      <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700"/>
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">ou insira manualmente</span>
+                      <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700"/>
+                    </div>
 
                     <div className="space-y-4">
                        {/* Toggle tipo de questão */}

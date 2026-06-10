@@ -465,6 +465,7 @@ export const EvaluationView: React.FC = () => {
         setIsAnnulled(true); setAlreadyDone(true); setIsFinished(true);
         setCheckingStatus(false);
         return;
+      }
 
       // Detecta tipo (redação vs simulado) e monta o título esperado da submissão
       const isEssayExam = examData.type === 'essay' || (examData.questions?.[0]?.type === 'essay');
