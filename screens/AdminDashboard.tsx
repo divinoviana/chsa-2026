@@ -402,28 +402,19 @@ export const AdminDashboard: React.FC = () => {
   const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const handleResetPassword = async () => {
-    if (!resetPasswordStudent || newPassword.length < 6 || isResettingPassword) return;
+    if (!resetPasswordStudent || isResettingPassword) return;
     setIsResettingPassword(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-reset-password`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`,
-          },
-          body: JSON.stringify({ student_id: resetPasswordStudent.id, new_password: newPassword }),
-        }
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        resetPasswordStudent.email,
+        { redirectTo: `${window.location.origin}${window.location.pathname}#/login` }
       );
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Erro desconhecido');
-      alert(`✅ Senha de ${resetPasswordStudent.name} alterada com sucesso!`);
+      if (error) throw error;
+      alert(`✅ Link de redefinição de senha enviado para ${resetPasswordStudent.email}.\n\nO estudante receberá um e-mail com instruções para criar uma nova senha.`);
       setResetPasswordStudent(null);
       setNewPassword('');
     } catch (e: any) {
-      alert('Erro ao redefinir senha: ' + (e?.message || ''));
+      alert('Erro ao enviar e-mail de redefinição: ' + (e?.message || 'Tente novamente.'));
     } finally {
       setIsResettingPassword(false);
     }
@@ -4712,10 +4703,10 @@ export const AdminDashboard: React.FC = () => {
         const activeNotes = grouped[activeCat.v] || [];
 
         return (
-          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-2xl z-[60] flex items-center justify-center p-6 animate-in fade-in duration-300">
+          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-2xl z-[60] flex items-center justify-center p-6 animate-in fade-in duration-300" onClick={() => setNotesModalStudent(null)}>
             <div className="absolute -top-32 -left-20 w-96 h-96 bg-vibe-pink/20 rounded-full blur-3xl animate-blob"></div>
             <div className="absolute -bottom-32 -right-20 w-96 h-96 bg-vibe-cyan/20 rounded-full blur-3xl animate-blob" style={{ animationDelay: '3s' }}></div>
-            <div className="relative bg-white dark:bg-slate-900 w-full max-w-3xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-white/20 z-10">
+            <div className="relative bg-white dark:bg-slate-900 w-full max-w-3xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-white/20 z-10" onClick={e => e.stopPropagation()}>
               {/* Header com gradient */}
               <div className="relative p-6 bg-gradient-vibe text-white overflow-hidden">
                 <div className="absolute top-0 right-0 w-48 h-48 bg-white/20 rounded-full blur-3xl"></div>
@@ -5575,16 +5566,11 @@ export const AdminDashboard: React.FC = () => {
             <p className="text-xs text-slate-400 mt-1 font-bold uppercase tracking-widest">{resetPasswordStudent.name}</p>
           </div>
           <div className="space-y-3">
-            <input
-              type="password"
-              placeholder="Nova senha (mín. 6 caracteres)"
-              value={newPassword}
-              onChange={e => setNewPassword(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleResetPassword(); }}
-              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl text-sm outline-none dark:text-white font-medium"
-              autoFocus
-            />
-            <p className="text-[10px] text-slate-400 text-center">A nova senha será aplicada imediatamente ao login do aluno.</p>
+            <div className="bg-slate-50 dark:bg-slate-800 rounded-2xl p-4 text-center space-y-1">
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{resetPasswordStudent.email}</p>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Um link de redefinição será enviado para este e-mail</p>
+            </div>
+            <p className="text-[10px] text-slate-400 text-center">O estudante receberá um e-mail com link para criar uma nova senha.</p>
           </div>
           <div className="flex gap-3">
             <button onClick={() => setResetPasswordStudent(null)} className="flex-1 py-3 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black text-xs uppercase tracking-widest hover:scale-105 transition-all">
@@ -5592,11 +5578,11 @@ export const AdminDashboard: React.FC = () => {
             </button>
             <button
               onClick={handleResetPassword}
-              disabled={isResettingPassword || newPassword.length < 6}
+              disabled={isResettingPassword}
               className="flex-1 py-3 rounded-2xl bg-rose-500 text-white font-black text-xs uppercase tracking-widest hover:bg-rose-600 hover:scale-105 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isResettingPassword ? <Loader2 size={14} className="animate-spin"/> : <KeyRound size={14}/>}
-              Salvar
+              Enviar Link
             </button>
           </div>
         </div>
