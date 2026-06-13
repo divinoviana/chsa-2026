@@ -339,6 +339,7 @@ export const Home: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  {pendingExams.map(exam => {
                    const isEssayItem = exam.type === 'essay' || exam.questions?.[0]?.type === 'essay';
+                   const isAvaliacaoItem = exam.type === 'avaliacao';
                    const subjInfo = !isEssayItem ? subjectsInfo[exam.subject as Subject] : null;
                    return (
                     <Link
@@ -360,6 +361,11 @@ export const Home: React.FC = () => {
                              {isEssayItem && (
                                <span className="inline-flex items-center gap-1 bg-gradient-fire text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full mb-1">
                                  ✍️ Redação
+                               </span>
+                             )}
+                             {isAvaliacaoItem && (
+                               <span className="inline-flex items-center gap-1 bg-gradient-ocean text-white text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full mb-1 ml-1">
+                                 📍 Presencial
                                </span>
                              )}
                              <h4 className="font-bold text-slate-800 dark:text-slate-100 text-sm leading-tight">

@@ -242,7 +242,7 @@ export const AdminDashboard: React.FC = () => {
   const isSuper = student?.email === 'admin@admin.com' || student?.email === 'divinoviana@gmail.com';
 
   // Estados principais
-  const [activeTab, setActiveTab] = useState<'question_bank' | 'submissions' | 'students' | 'messages' | 'lessons_list' | 'exam_generator' | 'essays' | 'attendance' | 'reports' | 'evaluations'>('lessons_list');
+  const [activeTab, setActiveTab] = useState<'question_bank' | 'submissions' | 'students' | 'messages' | 'lessons_list' | 'exam_generator' | 'avaliacoes' | 'essays' | 'attendance' | 'reports' | 'evaluations'>('lessons_list');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -325,6 +325,7 @@ export const AdminDashboard: React.FC = () => {
   const [isGeneratingExam, setIsGeneratingExam] = useState(false);
   const [isPublishingExam, setIsPublishingExam] = useState(false);
   const [publishedExams, setPublishedExams] = useState<any[]>([]);
+  const [publishedAvaliacoes, setPublishedAvaliacoes] = useState<any[]>([]);
   const [editingPublishedExam, setEditingPublishedExam] = useState<any | null>(null);
   const [editExamTitle, setEditExamTitle] = useState('');
   const [editExamExpiresAt, setEditExamExpiresAt] = useState('');
@@ -1326,6 +1327,7 @@ export const AdminDashboard: React.FC = () => {
       // Quando a coluna `type` não existe (schema antigo), tudo conta como 'exam'.
       setPublishedExams(all.filter((e: any) => (e.type || 'exam') === 'exam'));
       setPublishedEssays(all.filter((e: any) => e.type === 'essay'));
+      setPublishedAvaliacoes(all.filter((e: any) => e.type === 'avaliacao'));
     } catch (e) {
       console.error('Erro ao buscar simulados/redações:', e);
     }
@@ -1648,11 +1650,14 @@ export const AdminDashboard: React.FC = () => {
   // Publica o simulado: salva em bimonthly_exams para os alunos verem
   const handlePublishExam = async () => {
     if (isPublishingExam) return;
+    // Avaliação presencial (geo) vs. Simulado (de casa) — depende da aba ativa
+    const isAvaliacao = activeTab === 'avaliacoes';
+    const tipoLabel = isAvaliacao ? 'avaliação' : 'simulado';
     if (examQuestionsDraft.length === 0) {
       alert('Adicione pelo menos uma questão antes de publicar.');
       return;
     }
-    if (!confirm(`Publicar este simulado? ${examQuestionsDraft.length} questões serão liberadas para os alunos.`)) return;
+    if (!confirm(`Publicar esta ${tipoLabel}? ${examQuestionsDraft.length} questões serão liberadas para os alunos.${isAvaliacao ? '\n\n📍 Esta avaliação exigirá que o aluno esteja na escola (geolocalização).' : ''}`)) return;
     setIsPublishingExam(true);
     try {
       // Resolve campos de turma-alvo a partir do estado examTarget
@@ -1669,15 +1674,17 @@ export const AdminDashboard: React.FC = () => {
         subject: teacherSubject || 'Geral',
         grade: String(examGrade),
         bimester: String(examBimester),
-        type: 'exam',
-        title: examTitle.trim() || `Simulado - ${examBimester}º Bimestre`,
+        type: isAvaliacao ? 'avaliacao' : 'exam',
+        title: examTitle.trim() || `${isAvaliacao ? 'Avaliação' : 'Simulado'} - ${examBimester}º Bimestre`,
         school_class: schoolClassSingle,
         school_classes: schoolClassesArray,
         topics: examTopics.split(',').map(t => t.trim()).filter(Boolean),
         questions: examQuestionsDraft,
         expires_at: examExpiresAt ? new Date(examExpiresAt).toISOString() : null,
         starts_at: examHidden ? '2099-01-01T00:00:00Z' : (examStartsAt ? new Date(examStartsAt).toISOString() : null),
-        require_geo: examRequireGeo,
+        // Geolocalização é exclusiva das avaliações presenciais.
+        // Simulados podem ser feitos de casa (sem geo).
+        require_geo: isAvaliacao,
       };
 
       // Insere em modo "tolerante a schema": se uma coluna não existir,
@@ -1705,11 +1712,15 @@ export const AdminDashboard: React.FC = () => {
 
       if (compatColumns.length > 0) {
         alert(
-          `Simulado publicado em modo de compatibilidade (sem ${compatColumns.join(', ')}).\n\n` +
+          `${isAvaliacao ? 'Avaliação' : 'Simulado'} publicado em modo de compatibilidade (sem ${compatColumns.join(', ')}).\n\n` +
           '⚠️ Para suportar todos os campos, rode supabase/fix_all.sql no SQL Editor do Supabase.'
         );
       } else {
-        alert('Simulado publicado com sucesso! Os alunos já podem realizá-lo.');
+        alert(
+          isAvaliacao
+            ? '📍 Avaliação presencial publicada! Os alunos só poderão responder dentro da escola.'
+            : 'Simulado publicado com sucesso! Os alunos já podem realizá-lo de qualquer lugar.'
+        );
       }
       // Reset
       setExamQuestionsDraft([]);
@@ -1721,7 +1732,17 @@ export const AdminDashboard: React.FC = () => {
       setExamRequireGeo(false);
       fetchPublishedExams();
     } catch (e: any) {
-      alert('Erro ao publicar: ' + (e?.message || ''));
+      const msg = String(e?.message || '');
+      // CHECK constraint do tipo ainda não atualizada no banco
+      if (isAvaliacao && /type_check|check constraint/i.test(msg)) {
+        alert(
+          '⚠️ O banco ainda não reconhece o tipo "avaliação".\n\n' +
+          'Rode o arquivo supabase/add_avaliacao_type.sql no SQL Editor do Supabase ' +
+          'e tente publicar novamente.'
+        );
+      } else {
+        alert('Erro ao publicar: ' + msg);
+      }
       console.error('publishExam error:', e);
     } finally {
       setIsPublishingExam(false);
@@ -1784,13 +1805,14 @@ export const AdminDashboard: React.FC = () => {
           school_class: schoolClassSingle,
           school_classes: schoolClassesArray,
           class_releases: editExamClassReleases,
-          require_geo: editExamRequireGeo,
+          // Geo é definido pelo tipo: avaliação = presencial, simulado = de casa.
+          require_geo: editingPublishedExam?.type === 'avaliacao',
         })
         .eq('id', editingPublishedExam.id);
       if (error) throw error;
       setEditingPublishedExam(null);
       fetchPublishedExams();
-      alert('Simulado atualizado com sucesso!');
+      alert(`${editingPublishedExam?.type === 'avaliacao' ? 'Avaliação atualizada' : 'Simulado atualizado'} com sucesso!`);
     } catch (e: any) {
       alert('Erro ao salvar: ' + e.message);
     } finally {
@@ -2313,6 +2335,11 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Avaliações reutilizam o editor de simulados (mesma tabela bimonthly_exams),
+  // mudando apenas type='avaliacao' e geolocalização obrigatória.
+  const isAvaliacaoTab = activeTab === 'avaliacoes';
+  const currentPublishedList = isAvaliacaoTab ? publishedAvaliacoes : publishedExams;
+
   return (
     <>
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex transition-colors duration-300 relative">
@@ -2354,6 +2381,7 @@ export const AdminDashboard: React.FC = () => {
               { id: 'students',       icon: UserCircle,   label: 'Estudantes',       grad: 'bg-gradient-vibe',    glow: 'shadow-glow-pink' },
               { id: 'messages',       icon: MessageSquare,label: 'Mensagens',        grad: 'bg-gradient-mint',    glow: 'shadow-glow-lime' },
               { id: 'exam_generator', icon: BrainCircuit, label: 'Simulados',        grad: 'bg-gradient-sunset',  glow: 'shadow-glow-pink' },
+              { id: 'avaliacoes',     icon: ShieldCheck,  label: 'Avaliações',       grad: 'bg-gradient-ocean',   glow: 'shadow-glow-cyan' },
               { id: 'essays',         icon: FileText,     label: 'Redação',          grad: 'bg-gradient-fire',    glow: 'shadow-glow-orange' },
               { id: 'attendance',     icon: MapPin,       label: 'Frequência',       grad: 'bg-gradient-ocean',   glow: 'shadow-glow-cyan' },
               { id: 'reports',        icon: BarChart3,    label: 'Relatórios IA',    grad: 'bg-gradient-cosmic',  glow: 'shadow-glow-purple' },
@@ -2423,6 +2451,7 @@ export const AdminDashboard: React.FC = () => {
                   {activeTab === 'students' && '👥 Carômetro'}
                   {activeTab === 'messages' && '💬 Central de Dúvidas'}
                   {activeTab === 'exam_generator' && '🎯 Simulados'}
+                  {activeTab === 'avaliacoes' && '📍 Avaliações Presenciais'}
                   {activeTab === 'essays' && '✍️ Redação'}
                   {activeTab === 'attendance' && '📍 Frequência por Geolocalização'}
                   {activeTab === 'reports' && '📊 Análise de Progresso'}
@@ -3388,24 +3417,30 @@ export const AdminDashboard: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'exam_generator' && (
+          {(activeTab === 'exam_generator' || activeTab === 'avaliacoes') && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-5xl mx-auto">
               {/* MÓDULO 1: META + IA opcional */}
               <div className="bg-white dark:bg-slate-900 rounded-[40px] border dark:border-slate-800 p-8 shadow-sm">
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-12 h-12 bg-tocantins-blue/10 dark:bg-tocantins-yellow/10 rounded-2xl flex items-center justify-center text-tocantins-blue dark:text-tocantins-yellow shadow-inner">
-                    <ClipboardEdit size={24}/>
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-inner ${isAvaliacaoTab ? 'bg-gradient-ocean' : 'bg-tocantins-blue/10 dark:bg-tocantins-yellow/10 !text-tocantins-blue dark:!text-tocantins-yellow'}`}>
+                    {isAvaliacaoTab ? <ShieldCheck size={24}/> : <ClipboardEdit size={24}/>}
                   </div>
                   <div>
-                    <h2 className="text-2xl font-black text-slate-800 dark:text-white uppercase tracking-tighter">Compor Simulado Bimestral</h2>
-                    <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">Crie manualmente as questões. Ao publicar, vira avaliação para os alunos.</p>
+                    <h2 className="text-2xl font-black text-slate-800 dark:text-white uppercase tracking-tighter">
+                      {isAvaliacaoTab ? 'Compor Avaliação Presencial' : 'Compor Simulado Bimestral'}
+                    </h2>
+                    <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">
+                      {isAvaliacaoTab
+                        ? '📍 Exige presença na escola (geolocalização). Use para provas valendo nota.'
+                        : '🏠 Pode ser feito de casa. Crie manualmente as questões.'}
+                    </p>
                   </div>
                 </div>
 
                 <div className="space-y-3">
                   <input
                     type="text"
-                    placeholder="Título do simulado (ex.: Simulado: Indivíduo e Sociedade)"
+                    placeholder={isAvaliacaoTab ? 'Título da avaliação (ex.: Avaliação 1º Bimestre — Sociologia)' : 'Título do simulado (ex.: Simulado: Indivíduo e Sociedade)'}
                     value={examTitle}
                     onChange={e => setExamTitle(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-4 focus:ring-blue-100 dark:focus:ring-blue-900/10"
@@ -3481,31 +3516,25 @@ export const AdminDashboard: React.FC = () => {
                     </span>
                   </button>
 
-                  {/* Toggle geolocalização */}
-                  <div
-                    onClick={() => setExamRequireGeo(v => !v)}
-                    className={`flex items-center justify-between gap-4 px-5 py-4 rounded-2xl border cursor-pointer transition-all select-none ${
-                      examRequireGeo
-                        ? 'border-tocantins-blue/60 bg-tocantins-blue/5 dark:bg-tocantins-blue/10'
-                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'
-                    }`}
-                  >
-                    <div>
-                      <p className={`text-xs font-black ${examRequireGeo ? 'text-tocantins-blue dark:text-tocantins-yellow' : 'text-slate-600 dark:text-slate-400'}`}>
-                        📍 Exigir localização geográfica
-                      </p>
-                      <p className="text-[10px] font-bold text-slate-400 mt-0.5">
-                        {examRequireGeo
-                          ? 'Aluno deve estar na escola para responder'
-                          : 'Aluno pode responder de qualquer lugar'}
+                  {/* Cartão informativo de geolocalização (definido pelo tipo de aba) */}
+                  {isAvaliacaoTab ? (
+                    <div className="flex items-center gap-3 px-5 py-4 rounded-2xl border border-tocantins-blue/40 bg-tocantins-blue/5 dark:bg-tocantins-blue/10">
+                      <MapPin size={20} className="text-tocantins-blue dark:text-tocantins-yellow shrink-0"/>
+                      <div>
+                        <p className="text-xs font-black text-tocantins-blue dark:text-tocantins-yellow">📍 Presencial — geolocalização obrigatória</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-0.5">
+                          O aluno só consegue responder dentro do perímetro da escola. Configure a localização na aba <strong>Frequência</strong>.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 px-5 py-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                      <span className="text-lg shrink-0">🏠</span>
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                        Simulado pode ser respondido de qualquer lugar (sem geolocalização). Para prova presencial, use a aba <strong>Avaliações</strong>.
                       </p>
                     </div>
-                    <div className={`w-12 h-6 rounded-full transition-all flex-shrink-0 flex items-center px-1 ${
-                      examRequireGeo ? 'bg-tocantins-blue' : 'bg-slate-300 dark:bg-slate-600'
-                    }`}>
-                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${examRequireGeo ? 'translate-x-6' : 'translate-x-0'}`}/>
-                    </div>
-                  </div>
+                  )}
 
                   <button
                     onClick={handleGenerateExam}
@@ -3599,7 +3628,7 @@ export const AdminDashboard: React.FC = () => {
                     onClick={handleAddExamQuestion}
                     className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-950 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2"
                   >
-                    <CheckCircle2 size={14}/> Adicionar ao Simulado
+                    <CheckCircle2 size={14}/> {isAvaliacaoTab ? 'Adicionar à Avaliação' : 'Adicionar ao Simulado'}
                   </button>
                 </div>
               </div>
@@ -3609,7 +3638,7 @@ export const AdminDashboard: React.FC = () => {
                 <div className="bg-white dark:bg-slate-900 rounded-[40px] border dark:border-slate-800 p-8 shadow-sm">
                   <div className="flex items-center justify-between mb-6">
                     <div>
-                      <h3 className="font-black text-slate-800 dark:text-white uppercase text-sm tracking-tight">Questões do Simulado</h3>
+                      <h3 className="font-black text-slate-800 dark:text-white uppercase text-sm tracking-tight">{isAvaliacaoTab ? 'Questões da Avaliação' : 'Questões do Simulado'}</h3>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{examQuestionsDraft.length} questões adicionadas</p>
                     </div>
                     <button
@@ -3652,14 +3681,14 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               )}
 
-              {/* MÓDULO 4: Simulados publicados */}
-              {publishedExams.length > 0 && (
+              {/* MÓDULO 4: Itens publicados (simulados ou avaliações) */}
+              {currentPublishedList.length > 0 && (
                 <div className="bg-white dark:bg-slate-900 rounded-[40px] border dark:border-slate-800 p-8 shadow-sm">
                   <h3 className="font-black text-slate-800 dark:text-white uppercase text-sm tracking-tight mb-6 flex items-center gap-2">
-                    <Library size={16}/> Simulados Publicados ({publishedExams.length})
+                    <Library size={16}/> {isAvaliacaoTab ? 'Avaliações Publicadas' : 'Simulados Publicados'} ({currentPublishedList.length})
                   </h3>
                   <div className="space-y-3">
-                    {publishedExams.map((exam: any) => {
+                    {currentPublishedList.map((exam: any) => {
                       const isHidden = exam.starts_at && new Date(exam.starts_at) > new Date();
                       const isExpired = exam.expires_at && new Date(exam.expires_at) < new Date();
                       return (
@@ -3671,7 +3700,8 @@ export const AdminDashboard: React.FC = () => {
                               </div>
                               <div className="min-w-0">
                                 <p className="font-bold text-slate-800 dark:text-slate-100 text-sm truncate">
-                                  {exam.title || `Simulado ${subjectsInfo[exam.subject as Subject]?.name || exam.subject}`}
+                                  {isAvaliacaoTab && <span title="Presencial — geolocalização">📍 </span>}
+                                  {exam.title || `${isAvaliacaoTab ? 'Avaliação' : 'Simulado'} ${subjectsInfo[exam.subject as Subject]?.name || exam.subject}`}
                                 </p>
                                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
                                   {exam.bimester}º Bimestre • {exam.grade}ª Série • {exam.school_class || 'Todas as turmas'} • {(exam.questions?.length || 0)} questões
@@ -5238,31 +5268,22 @@ export const AdminDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* Toggle geolocalização */}
-            <div
-              onClick={() => setEditExamRequireGeo(v => !v)}
-              className={`flex items-center justify-between gap-4 px-5 py-4 rounded-2xl border cursor-pointer transition-all select-none ${
-                editExamRequireGeo
-                  ? 'border-tocantins-blue/60 bg-tocantins-blue/5 dark:bg-tocantins-blue/10'
-                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'
-              }`}
-            >
-              <div>
-                <p className={`text-xs font-black ${editExamRequireGeo ? 'text-tocantins-blue dark:text-tocantins-yellow' : 'text-slate-600 dark:text-slate-400'}`}>
-                  📍 Exigir localização geográfica
-                </p>
-                <p className="text-[10px] font-bold text-slate-400 mt-0.5">
-                  {editExamRequireGeo
-                    ? 'Aluno deve estar na escola para responder'
-                    : 'Aluno pode responder de qualquer lugar'}
+            {/* Geolocalização — definida pelo tipo do item (somente leitura) */}
+            {editingPublishedExam?.type === 'avaliacao' ? (
+              <div className="flex items-center gap-3 px-5 py-4 rounded-2xl border border-tocantins-blue/40 bg-tocantins-blue/5 dark:bg-tocantins-blue/10">
+                <MapPin size={18} className="text-tocantins-blue dark:text-tocantins-yellow shrink-0"/>
+                <p className="text-[11px] font-bold text-tocantins-blue dark:text-tocantins-yellow">
+                  📍 Avaliação presencial — exige que o aluno esteja na escola.
                 </p>
               </div>
-              <div className={`w-12 h-6 rounded-full transition-all flex-shrink-0 flex items-center px-1 ${
-                editExamRequireGeo ? 'bg-tocantins-blue' : 'bg-slate-300 dark:bg-slate-600'
-              }`}>
-                <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${editExamRequireGeo ? 'translate-x-6' : 'translate-x-0'}`}/>
+            ) : (
+              <div className="flex items-center gap-3 px-5 py-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                <span className="text-base shrink-0">🏠</span>
+                <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                  Pode ser respondido de qualquer lugar (sem geolocalização).
+                </p>
               </div>
-            </div>
+            )}
             {/* Questões */}
             {editExamQuestions.map((q: any, qi: number) => (
               <div key={qi} className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 space-y-4">
