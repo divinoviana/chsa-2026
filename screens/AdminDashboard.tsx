@@ -538,13 +538,26 @@ export const AdminDashboard: React.FC = () => {
   const fetchSubmissions = async () => {
     try {
       // Exclui content e ai_feedback (jsonb pesados) da listagem; carregados sob demanda no modal.
-      let qb = supabase.from('submissions')
-        .select('id,student_id,student_name,school_class,grade,lesson_id,lesson_title,subject,score,status,submitted_at,submission_date,teacher_feedback')
-        .order('submitted_at', { ascending: false, nullsFirst: false });
-      if (!isSuper && teacherSubject) qb = qb.eq('subject', teacherSubject);
-      const { data, error } = await qb;
-      if (error) throw error;
-      setSubmissions(data || []);
+      // PAGINAÇÃO: o PostgREST limita cada resposta a 1000 linhas. Com mais de
+      // 1000 submissões, sem paginar o professor perdia as mais antigas (entregas
+      // simplesmente "sumiam"). Buscamos em lotes de 1000 até trazer todas.
+      const PAGE = 1000;
+      let from = 0;
+      const all: any[] = [];
+      while (true) {
+        let qb = supabase.from('submissions')
+          .select('id,student_id,student_name,school_class,grade,lesson_id,lesson_title,subject,score,status,submitted_at,submission_date,teacher_feedback')
+          .order('submitted_at', { ascending: false, nullsFirst: false })
+          .range(from, from + PAGE - 1);
+        if (!isSuper && teacherSubject) qb = qb.eq('subject', teacherSubject);
+        const { data, error } = await qb;
+        if (error) throw error;
+        const batch = data || [];
+        all.push(...batch);
+        if (batch.length < PAGE) break; // última página
+        from += PAGE;
+      }
+      setSubmissions(all);
     } catch (e) {
       console.error("Erro ao buscar submissões:", e);
     }
