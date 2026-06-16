@@ -59,29 +59,30 @@ export const SubmissionBar: React.FC<Props> = ({
 
     setIsGenerating(true);
     setDbStatus('saving');
-    
-    let currentAIData = aiData;
+
     try {
-      // evaluateActivities NUNCA lança — corrige objetivas localmente e
-      // tenta IA pras discursivas. Se IA cair, ainda retorna AIResponse
-      // completa com fallback. Por isso não precisamos mais de try/catch aqui.
-      if (!currentAIData) {
-        const q = submissionData.map(item => ({
-          question: item.question,
-          answer: item.answer,
-          correctAnswer: item.correctAnswer,
-        }));
-        currentAIData = await evaluateActivities(lessonTitle, theory, q);
+      // ETAPA 1 — Corrige objetivas localmente (instantâneo, sem IA)
+      const objectiveItems = submissionData.filter(q => q.correctAnswer && q.correctAnswer.trim() !== '');
+      const discursiveItems = submissionData.filter(q => !q.correctAnswer || q.correctAnswer.trim() === '');
+      const hasDiscursive = discursiveItems.length > 0;
+
+      // Pré-calcula score com base apenas nas objetivas para salvar imediatamente
+      let prelimScore = 0;
+      if (objectiveItems.length > 0) {
+        const correct = objectiveItems.filter(q => {
+          const a = (q.answer || '').trim().toLowerCase();
+          const c = (q.correctAnswer || '').trim().toLowerCase();
+          return a === c || a.startsWith(c) || c.startsWith(a);
+        }).length;
+        prelimScore = Math.round((correct / objectiveItems.length) * 10);
+      } else if (hasDiscursive) {
+        prelimScore = 0; // será atualizado pela IA em background
       }
 
-      const corrections = currentAIData?.corrections || [];
-      const avgScore = corrections.length > 0
-        ? corrections.reduce((acc, c) => acc + (Number(c.score) || 0), 0) / corrections.length
-        : 0;
-
-      console.log("Iniciando gravação no Supabase...");
+      // ETAPA 2 — Salva NO BANCO imediatamente (não espera IA)
+      console.log("Gravando atividade no banco...");
       const nowIso = new Date().toISOString();
-      const { error } = await supabase.from('submissions').insert({
+      const { data: inserted, error: insertError } = await supabase.from('submissions').insert({
         student_id: student?.id || null,
         student_name: safeStudentName,
         school_class: safeSchoolClass,
@@ -92,23 +93,49 @@ export const SubmissionBar: React.FC<Props> = ({
         submission_date: nowIso,
         submitted_at: nowIso,
         content: submissionData,
-        ai_feedback: integrityData ? { ...currentAIData, integrity: integrityData } : currentAIData,
-        score: isNaN(avgScore) ? 0 : avgScore,
-        status: 'completed',
+        ai_feedback: aiData ?? null,
+        score: prelimScore,
+        status: hasDiscursive && !aiData ? 'pending_ai' : 'completed',
         teacher_feedback: null,
-      });
-      if (error) throw error;
+      }).select('id').single();
+      if (insertError) throw insertError;
 
-      console.log("Gravação concluída com sucesso.");
+      // ETAPA 3 — Aluno já está salvo: mostra sucesso imediatamente
       setDbStatus('saved');
+      setIsGenerating(false);
       alert(`Atividade de ${subject.toUpperCase()} enviada com sucesso ao professor!`);
+
+      // ETAPA 4 — IA em background para discursivas (não bloqueia o aluno)
+      if (hasDiscursive && !aiData && inserted?.id) {
+        const submissionId = inserted.id;
+        (async () => {
+          try {
+            const q = submissionData.map(item => ({
+              question: item.question,
+              answer: item.answer,
+              correctAnswer: item.correctAnswer,
+            }));
+            const aiResult = await evaluateActivities(lessonTitle, theory, q);
+            const corrections = aiResult?.corrections || [];
+            const avgScore = corrections.length > 0
+              ? corrections.reduce((acc, c) => acc + (Number(c.score) || 0), 0) / corrections.length
+              : prelimScore;
+            await supabase.from('submissions').update({
+              ai_feedback: integrityData ? { ...aiResult, integrity: integrityData } : aiResult,
+              score: isNaN(avgScore) ? prelimScore : avgScore,
+              status: 'completed',
+            }).eq('id', submissionId);
+          } catch (e) {
+            console.warn('[IA] Correção em background falhou; nota preliminar mantida.', e);
+          }
+        })();
+      }
     } catch (error: any) {
       console.error("Erro fatal ao enviar atividade:", error);
       setDbStatus('error');
+      setIsGenerating(false);
       const msg = error instanceof Error ? error.message : String(error);
       alert(`⚠️ Não foi possível enviar a atividade.\n\nErro: ${msg}\n\nVerifique sua conexão e tente novamente. Se o problema persistir, avise seu professor.`);
-    } finally {
-      setIsGenerating(false);
     }
   };
 

@@ -187,14 +187,22 @@ async function callDeepSeek(userPrompt: string, opts: DeepSeekOpts = {}): Promis
   };
   if (opts.json) body.response_format = { type: 'json_object' };
 
-  const res = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000); // 20s max
+  let res: Response;
+  try {
+    res = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -215,7 +223,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
     return await fn();
   } catch (error: any) {
     const msg = String(error?.message || '');
-    const retriable = /429|503|502|504|RESOURCE_EXHAUSTED|rate limit|timeout/i.test(msg);
+    const isAbort = error?.name === 'AbortError';
+    const retriable = !isAbort && /429|503|502|504|RESOURCE_EXHAUSTED|rate limit|timeout/i.test(msg);
     if (retriable && retries > 0) {
       console.warn(`[DeepSeek] Erro retriável. Reenviando em ${delay / 1000}s... (${retries} tentativas restantes)`);
       await sleep(delay);
