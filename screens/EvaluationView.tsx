@@ -148,6 +148,8 @@ export const EvaluationView: React.FC = () => {
   const [essayCorrection, setEssayCorrection] = useState<any | null>(null);
   // Loading específico para mostrar "Corrigindo redação…" durante a chamada IA
   const [isCorrectingEssay, setIsCorrectingEssay] = useState(false);
+  // Confirmação em-tela da redação (substitui confirm() nativo que falha no mobile)
+  const [confirmingEssay, setConfirmingEssay] = useState(false);
   const isEssay = exam?.type === 'essay' || (exam?.questions?.[0]?.type === 'essay');
 
   useEffect(() => {
@@ -526,7 +528,6 @@ export const EvaluationView: React.FC = () => {
       alert('Sua redação está muito curta (mínimo de 200 caracteres). Desenvolva mais o texto.');
       return;
     }
-    if (!confirm('Tem certeza que quer enviar? Você só tem UMA tentativa para esta redação.')) return;
     setIsSubmitting(true);
     try {
       const nowIso = new Date().toISOString();
@@ -547,9 +548,9 @@ export const EvaluationView: React.FC = () => {
       // 1) SALVA PRIMEIRO — aluno não fica esperando a IA
       const { data: insertedRow, error } = await supabase.from('submissions').insert({
         student_id: student.id,
-        student_name: student.name.trim(),
-        school_class: student.school_class.trim(),
-        grade: student.grade,
+        student_name: (student.name ?? '').trim() || 'Estudante',
+        school_class: (student.school_class ?? '').trim() || 'N/A',
+        grade: student.grade || '1',
         lesson_id: examId,
         lesson_title: `Redação: ${title}`,
         subject: exam.subject,
@@ -580,6 +581,7 @@ export const EvaluationView: React.FC = () => {
 
       // 2) Aluno já está salvo — mostra tela de conclusão
       setScore(plagiarism.detected ? 0 : 0);
+      setConfirmingEssay(false);
       setIsFinished(true);
       setIsSubmitting(false);
 
@@ -618,6 +620,7 @@ export const EvaluationView: React.FC = () => {
       }
     } catch (err: any) {
       alert('Falha ao enviar redação: ' + (err?.message || 'tente novamente.'));
+      setConfirmingEssay(false);
       setIsSubmitting(false);
     }
   };
@@ -940,14 +943,45 @@ export const EvaluationView: React.FC = () => {
               </div>
             </div>
 
-            <button
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-              className="w-full bg-gradient-fire text-white py-6 rounded-[32px] font-black uppercase tracking-[0.25em] text-sm shadow-glow-orange hover:scale-[1.02] transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
-            >
-              {isSubmitting ? <Loader2 className="animate-spin"/> : <Send size={20}/>}
-              {isCorrectingEssay ? '🤖 IA corrigindo…' : isSubmitting ? 'Enviando…' : '✍️ Enviar Redação para Correção'}
-            </button>
+            {confirmingEssay && !isSubmitting ? (
+              <div className="bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 rounded-[32px] p-6 flex flex-col gap-4">
+                <p className="text-sm font-black text-amber-800 dark:text-amber-200 text-center leading-snug">
+                  ⚠️ Tem certeza que quer enviar? <br/>
+                  <span className="font-semibold">Você só tem <strong>UMA tentativa</strong> para esta redação.</span>
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setConfirmingEssay(false)}
+                    className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-4 rounded-2xl font-black text-sm tracking-tight hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
+                  >
+                    ✗ Cancelar — continuar escrevendo
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    className="flex-1 bg-gradient-fire text-white py-4 rounded-2xl font-black text-sm tracking-tight shadow-glow-orange hover:scale-[1.02] transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Send size={18}/> Confirmar Envio
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  if (isSubmitting) return;
+                  const txt = String(answers[1] || '').trim();
+                  if (txt.length < 200) {
+                    alert('Sua redação está muito curta (mínimo de 200 caracteres). Desenvolva mais o texto.');
+                    return;
+                  }
+                  setConfirmingEssay(true);
+                }}
+                disabled={isSubmitting}
+                className="w-full bg-gradient-fire text-white py-6 rounded-[32px] font-black uppercase tracking-[0.25em] text-sm shadow-glow-orange hover:scale-[1.02] transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
+              >
+                {isSubmitting ? <Loader2 className="animate-spin"/> : <Send size={20}/>}
+                {isCorrectingEssay ? '🤖 IA corrigindo…' : isSubmitting ? 'Enviando…' : '✍️ Enviar Redação para Correção'}
+              </button>
+            )}
           </div>
         ) : !isFinished ? (
            <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
