@@ -29,20 +29,9 @@ export const ActivityInput: React.FC<Props> = ({ questionId, questionText, value
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
-    
-    // Calcula a diferença de tamanho entre o texto novo e o antigo
-    // Se value for undefined, trata como string vazia
-    const currentValue = value || "";
-    const diff = newValue.length - currentValue.length;
-    
-    // Se inseriu mais de 30 caracteres de uma vez (ex: swipe longo ou paste disfarçado)
-    // bloqueia. Humanos digitam caractere por caractere ou palavras curtas.
-    if (diff > 30) {
-      setWarning("Não é permitido colar textos longos. Por favor, digite sua resposta.");
-      return;
-    }
-
-    // Se passou na verificação, limpa aviso se existir e atualiza
+    // Bloqueio de paste é feito pelo onPaste handler.
+    // Não bloqueamos onChange pois ditado por voz, swipe e autocomplete mobile
+    // inserem grandes blocos de texto de uma vez — isso é entrada legítima.
     if (warning) setWarning(null);
     onChange(newValue);
   };

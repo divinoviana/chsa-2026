@@ -105,8 +105,14 @@ export function useIntegrityMonitor(active: boolean) {
     const msSinceLastKey = now - lastKeystrokeRef.current;
     const charsAdded = ev.data?.length ?? 0;
 
-    // Sinal 2: bloco grande sem tecla recente
-    if (charsAdded > 30 && msSinceLastKey > 200) {
+    // Sinal 2: bloco muito grande sem tecla recente E sem composição IME/voz.
+    // Limiar alto (150) para não penalizar ditado por voz ou swipe keyboard,
+    // que inserem palavras/frases inteiras via onChange legítimo (isTrusted=true).
+    const isCompositionInput = ev.inputType?.startsWith('insert') && (
+      ev.inputType === 'insertFromComposition' ||
+      ev.inputType === 'insertReplacementText'
+    );
+    if (charsAdded > 150 && msSinceLastKey > 500 && !isCompositionInput) {
       setProgrammaticInputs(n => n + 1);
       return;
     }
@@ -145,8 +151,10 @@ export function useIntegrityMonitor(active: boolean) {
       set(newVal: string) {
         const prev = originalGet.call(this) as string;
         const added = (newVal?.length ?? 0) - (prev?.length ?? 0);
-        // Mais de 5 chars adicionados sem tecla nos últimos 400 ms = script
-        if (added > 5 && Date.now() - lastKeyRef.current > 400) {
+        // Limiar alto (100) para não confundir ditado por voz ou swipe keyboard
+        // com injeção programática. Scripts reais costumam inserir respostas
+        // completas (centenas de chars) de uma só vez.
+        if (added > 100 && Date.now() - lastKeyRef.current > 500) {
           setProgrammaticInputs(n => n + 1);
         }
         originalSet.call(this, newVal);

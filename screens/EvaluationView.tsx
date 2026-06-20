@@ -148,8 +148,9 @@ export const EvaluationView: React.FC = () => {
   const [essayCorrection, setEssayCorrection] = useState<any | null>(null);
   // Loading específico para mostrar "Corrigindo redação…" durante a chamada IA
   const [isCorrectingEssay, setIsCorrectingEssay] = useState(false);
-  // Confirmação em-tela da redação (substitui confirm() nativo que falha no mobile)
+  // Confirmações em-tela (substitui confirm() nativo que falha no mobile)
   const [confirmingEssay, setConfirmingEssay] = useState(false);
+  const [confirmingExam, setConfirmingExam] = useState(false);
   const isEssay = exam?.type === 'essay' || (exam?.questions?.[0]?.type === 'essay');
 
   useEffect(() => {
@@ -227,13 +228,17 @@ export const EvaluationView: React.FC = () => {
     // Trava local imediata — evita race condition entre insert async e navegação
     try { localStorage.setItem(`annulled_${student.id}_${examId}`, '1'); } catch(_e) {}
 
+    const safeName = (student.name ?? '').trim() || 'Estudante';
+    const safeClass = (student.school_class ?? '').trim() || 'N/A';
+    const safeGrade = student.grade || '1';
+
     // Grava no banco
     try {
       await supabase.from('submissions').insert({
         student_id: student.id,
-        student_name: student.name.trim(),
-        school_class: student.school_class.trim(),
-        grade: student.grade,
+        student_name: safeName,
+        school_class: safeClass,
+        grade: safeGrade,
         lesson_id: examId,
         lesson_title: examTitle.trim(),
         subject: exam.subject,
@@ -262,7 +267,6 @@ export const EvaluationView: React.FC = () => {
         .select('id, email')
         .eq('role', 'admin');
 
-      // Prefere o professor da disciplina; fallback para super admin
       const teacher = (admins || []).find((a: any) =>
         a.email?.toLowerCase().startsWith((exam.subject || '').toLowerCase())
       ) || (admins || []).find((a: any) =>
@@ -272,13 +276,13 @@ export const EvaluationView: React.FC = () => {
       if (teacher) {
         await supabase.from('messages').insert({
           sender_id: student.id,
-          sender_name: student.name.trim(),
+          sender_name: safeName,
           receiver_id: teacher.id,
-          school_class: student.school_class.trim(),
-          grade: student.grade,
+          school_class: safeClass,
+          grade: safeGrade,
           subject: exam.subject,
           is_from_teacher: false,
-          content: `🚫 PROVA ANULADA AUTOMATICAMENTE\n\nAluno: ${student.name}\nTurma: ${student.school_class} • ${student.grade}ª Série\nAvaliação: "${examTitle}"\n\nInfrações registradas (${totalViolations}/10):\n• Saídas de tela: ${tabSwitches}\n• Tentativas de colar: ${pasteAttempts}\n• Inserções automáticas: ${programmaticInputs}\n\nNota: 0,0 • Status: ANULADA\nO aluno está impedido de refazer esta avaliação.`,
+          content: `🚫 PROVA ANULADA AUTOMATICAMENTE\n\nAluno: ${safeName}\nTurma: ${safeClass} • ${safeGrade}ª Série\nAvaliação: "${examTitle}"\n\nInfrações registradas (${totalViolations}/10):\n• Saídas de tela: ${tabSwitches}\n• Tentativas de colar: ${pasteAttempts}\n• Inserções automáticas: ${programmaticInputs}\n\nNota: 0,0 • Status: ANULADA\nO aluno está impedido de refazer esta avaliação.`,
         });
       }
     } catch (msgErr) {
@@ -298,9 +302,9 @@ export const EvaluationView: React.FC = () => {
     try {
       await supabase.from('submissions').insert({
         student_id: student.id,
-        student_name: student.name.trim(),
-        school_class: student.school_class.trim(),
-        grade: student.grade,
+        student_name: (student.name ?? '').trim() || 'Estudante',
+        school_class: (student.school_class ?? '').trim() || 'N/A',
+        grade: student.grade || '1',
         lesson_id: examId,
         lesson_title: examTitle.trim(),
         subject: exam.subject,
@@ -455,8 +459,8 @@ export const EvaluationView: React.FC = () => {
         .from('submissions')
         .select('id, student_name')
         .eq('lesson_id', examId)
-        .eq('student_name', student.name.trim())
-        .eq('school_class', student.school_class.trim())
+        .eq('student_name', (student.name ?? '').trim())
+        .eq('school_class', (student.school_class ?? '').trim())
         .eq('status', 'annulled')
         .neq('student_id', student.id)
         .limit(1)
@@ -641,10 +645,7 @@ export const EvaluationView: React.FC = () => {
       return;
     }
 
-    const shouldConfirm = !skipConfirmRef.current;
     skipConfirmRef.current = false;
-    if (shouldConfirm && !confirm("Tem certeza que deseja enviar? Você só tem UMA tentativa para esta avaliação.")) return;
-
     setIsSubmitting(true);
 
     // 1) Corrige OBJETIVAS localmente (instantâneo, sem IA)
@@ -716,9 +717,9 @@ export const EvaluationView: React.FC = () => {
     try {
       const { data: insertedRow, error } = await supabase.from('submissions').insert({
         student_id: student.id,
-        student_name: student.name.trim(),
-        school_class: student.school_class.trim(),
-        grade: student.grade,
+        student_name: (student.name ?? '').trim() || 'Estudante',
+        school_class: (student.school_class ?? '').trim() || 'N/A',
+        grade: student.grade || '1',
         lesson_id: examId,
         lesson_title: examTitle.trim(),
         subject: exam.subject,
@@ -744,6 +745,7 @@ export const EvaluationView: React.FC = () => {
       if (error) throw error;
 
       setScore(prelimScore ?? objectiveScoreAvg ?? 0);
+      setConfirmingExam(false);
       setIsFinished(true);
       setIsSubmitting(false);
 
@@ -802,6 +804,7 @@ export const EvaluationView: React.FC = () => {
     } catch (err: any) {
       console.error('Erro ao salvar avaliação:', err);
       alert('Falha ao salvar: ' + (err?.message || 'tente novamente.'));
+      setConfirmingExam(false);
       setIsSubmitting(false);
     }
   };
@@ -1102,14 +1105,49 @@ export const EvaluationView: React.FC = () => {
                );
               })}
 
-              <button
-                onClick={handleSubmit}
-                disabled={isSubmitting}
-                className="w-full bg-gradient-cosmic text-white py-6 rounded-[32px] font-black uppercase tracking-[0.25em] text-sm shadow-glow-purple hover:shadow-glow-pink hover:scale-[1.02] transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
-              >
-                 {isSubmitting ? <Loader2 className="animate-spin"/> : <Send size={20}/>}
-                 🚀 Finalizar e Bloquear Tentativa
-              </button>
+              {confirmingExam && !isSubmitting ? (
+                <div className="bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 rounded-[32px] p-6 flex flex-col gap-4">
+                  <p className="text-sm font-black text-amber-800 dark:text-amber-200 text-center leading-snug">
+                    ⚠️ Tem certeza que quer enviar?<br/>
+                    <span className="font-semibold">Você só tem <strong>UMA tentativa</strong> para esta avaliação.</span>
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setConfirmingExam(false)}
+                      className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-4 rounded-2xl font-black text-sm tracking-tight hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
+                    >
+                      ✗ Cancelar — revisar respostas
+                    </button>
+                    <button
+                      onClick={handleSubmit}
+                      className="flex-1 bg-gradient-cosmic text-white py-4 rounded-2xl font-black text-sm tracking-tight shadow-glow-purple hover:scale-[1.02] transition-all active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <Send size={18}/> Confirmar Envio
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (isSubmitting) return;
+                    const activeQs = (shuffledExam || exam).questions;
+                    const unanswered = activeQs.filter((q: any) => {
+                      const v = answers[q.id];
+                      return v === undefined || v === null || String(v).trim() === '';
+                    });
+                    if (unanswered.length > 0) {
+                      alert(`Responda todas as ${activeQs.length} questões antes de finalizar. (${activeQs.length - unanswered.length}/${activeQs.length})`);
+                      return;
+                    }
+                    setConfirmingExam(true);
+                  }}
+                  disabled={isSubmitting}
+                  className="w-full bg-gradient-cosmic text-white py-6 rounded-[32px] font-black uppercase tracking-[0.25em] text-sm shadow-glow-purple hover:shadow-glow-pink hover:scale-[1.02] transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmitting ? <Loader2 className="animate-spin"/> : <Send size={20}/>}
+                  🚀 Finalizar e Bloquear Tentativa
+                </button>
+              )}
            </div>
         ) : isAnnulled ? (
           <div className="bg-red-600 p-1 rounded-[44px] shadow-2xl animate-in zoom-in duration-500">
