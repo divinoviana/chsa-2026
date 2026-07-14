@@ -66,6 +66,7 @@ admins por e-mail (lista hardcoded em `data_admin.ts`) ou `students.role='admin'
 - **`admins.sql`** — cria 7 contas admin em `auth.users` (divinoviana, admin, divino.viana, filosofia/geografia/historia/sociologia@frederico.edu.br).
 - **`fix_all.sql`** — consolidação dos hotfixes (adiciona colunas faltantes em `bimonthly_exams` e `student_notes`, ativa categoria como coluna separada). **SEMPRE rodar primeiro** em instalações novas.
 - **`fix_questions.sql`**, **`fix_exams.sql`** — patches individuais (já cobertos pelo fix_all).
+- **`cognitive.sql`** — tabela `cognitive_assessments` (Avaliação Cognitiva). **PENDENTE de aplicar** (jul/2026): o projeto Supabase está pausado por fatura em aberto na organização; quitar em Billing e rodar o SQL (ou `apply_migration` via MCP).
 
 ### Padrão "resiliente a schema variante"
 
@@ -101,6 +102,7 @@ o app funcionar mesmo se o SQL de fix não tiver sido rodado ainda.
 | `/my-activities` | `MyActivities.tsx` | Histórico de submissões com feedback da IA + nota. |
 | `/profile` | `Profile.tsx` | Trocar foto (câmera ou upload, redimensiona pra 512px @ 60% qualidade). |
 | `/atividades-adaptadas` | `AdaptedActivities.tsx` | **Rota pública** (sem login) — professor gera atividades adaptadas para alunos neurodivergentes. Exporta PDF/DOCX. CSS de impressão tem `@media print` em `index.html` + classe `.export-mode` que neutraliza cores escuras. |
+| `/avaliacao-cognitiva` | `CognitiveAssessment.tsx` | **Rota pública** — triagem de perfil cognitivo (6 domínios CHC), superdotação (Três Anéis de Renzulli) e neurodivergência (TDAH/TEA/dislexia) em graus. Itens gerados proceduralmente por sessão (`services/cognitiveEngine.ts`), adaptativo (staircase), timer por questão, modo anônimo (código `CHSA-XXXXXX`), monitor de integridade. Questionários em `services/cognitiveScreening.ts`. Resultados na aba **Neuro & QI** do admin. NÃO é diagnóstico — é triagem com recomendação de encaminhamento. |
 
 ### Admin (`/admin`)
 
