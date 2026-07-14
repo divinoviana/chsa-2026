@@ -19,6 +19,7 @@ const MyActivities   = lazy(() => import('./screens/MyActivities').then(m => ({ 
 const EvaluationView = lazy(() => import('./screens/EvaluationView').then(m => ({ default: m.EvaluationView })));
 const Profile        = lazy(() => import('./screens/Profile').then(m => ({ default: m.Profile })));
 const AdaptedActivities = lazy(() => import('./screens/AdaptedActivities').then(m => ({ default: m.AdaptedActivities })));
+const CognitiveAssessment = lazy(() => import('./screens/CognitiveAssessment').then(m => ({ default: m.CognitiveAssessment })));
 
 // Spinner padrão enquanto a tela carrega
 const RouteFallback = () => (
@@ -130,6 +131,9 @@ function AppContent() {
             {/* Rota PÚBLICA — atividades adaptadas para neurodivergentes.
                 Sem login: o professor acessa direto pelo link e gera atividade. */}
             <Route path="/atividades-adaptadas" element={<AdaptedActivities />} />
+            {/* Rota PÚBLICA — avaliação cognitiva (triagem QI/superdotação/
+                neurodivergência). Pode ser feita anônima, sem login. */}
+            <Route path="/avaliacao-cognitiva" element={<CognitiveAssessment />} />
           </Routes>
         </Suspense>
       </main>
@@ -150,6 +154,9 @@ function AppContent() {
                 <span className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Prof. Divino Viana</span>
               </div>
               <div className="flex flex-col md:items-end gap-2">
+                <Link to="/avaliacao-cognitiva" className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-xl text-cyan-300 text-xs font-bold hover:text-white hover:scale-105 transition">
+                  🧠 Avaliação Cognitiva
+                </Link>
                 <Link to="/admin" className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-xl text-white/60 hover:text-white transition-colors text-xs">
                   <Lock className="w-3 h-3" /> Painel Admin
                 </Link>

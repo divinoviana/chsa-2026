@@ -13,7 +13,7 @@ import {
   Clock, Send, BrainCircuit, Sparkles, FileText, CheckCircle2,
   Filter, Download, GraduationCap, ChevronRight, ClipboardEdit, 
   BarChart3, Printer, Wand2, Library, ListChecks, Database,
-  Sun, Moon, Presentation, ClipboardList, LogOut, Pencil, Eye, UserCircle, RotateCw, MapPin, Crosshair, Target, AlertTriangle, ExternalLink, KeyRound, Menu, ShieldAlert
+  Sun, Moon, Presentation, ClipboardList, LogOut, Pencil, Eye, UserCircle, RotateCw, MapPin, Crosshair, Target, AlertTriangle, ExternalLink, KeyRound, Menu, ShieldAlert, Brain
 } from 'lucide-react';
 
 // =====================================================================
@@ -242,7 +242,7 @@ export const AdminDashboard: React.FC = () => {
   const isSuper = student?.email === 'admin@admin.com' || student?.email === 'divinoviana@gmail.com';
 
   // Estados principais
-  const [activeTab, setActiveTab] = useState<'question_bank' | 'submissions' | 'students' | 'messages' | 'lessons_list' | 'exam_generator' | 'avaliacoes' | 'essays' | 'attendance' | 'reports' | 'evaluations'>('lessons_list');
+  const [activeTab, setActiveTab] = useState<'question_bank' | 'submissions' | 'students' | 'messages' | 'lessons_list' | 'exam_generator' | 'avaliacoes' | 'essays' | 'attendance' | 'reports' | 'evaluations' | 'neuro'>('lessons_list');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -446,6 +446,31 @@ export const AdminDashboard: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'attendance') fetchAttendanceRecords();
   }, [activeTab, attendanceFilterDate]);
+
+  // Resultados da Avaliação Cognitiva (triagem QI/superdotação/neuro)
+  const [neuroResults, setNeuroResults] = useState<any[]>([]);
+  const [neuroLoading, setNeuroLoading] = useState(false);
+  useEffect(() => {
+    if (activeTab !== 'neuro') return;
+    setNeuroLoading(true);
+    supabase
+      .from('cognitive_assessments')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(300)
+      .then(({ data, error }) => {
+        if (error) console.error('[Neuro] erro ao carregar:', error.message);
+        setNeuroResults(data || []);
+        setNeuroLoading(false);
+      });
+  }, [activeTab]);
+
+  const handleDeleteNeuroResult = async (id: string) => {
+    if (!confirm('Excluir este resultado de avaliação cognitiva?')) return;
+    const { error } = await supabase.from('cognitive_assessments').delete().eq('id', id);
+    if (error) { alert('Erro ao excluir: ' + error.message); return; }
+    setNeuroResults(prev => prev.filter(r => r.id !== id));
+  };
 
   useEffect(() => {
     if (!selectedChatStudentId) return;
@@ -2389,6 +2414,7 @@ export const AdminDashboard: React.FC = () => {
               { id: 'essays',         icon: FileText,     label: 'Redação',          grad: 'bg-gradient-fire',    glow: 'shadow-glow-orange' },
               { id: 'attendance',     icon: MapPin,       label: 'Frequência',       grad: 'bg-gradient-ocean',   glow: 'shadow-glow-cyan' },
               { id: 'reports',        icon: BarChart3,    label: 'Relatórios IA',    grad: 'bg-gradient-cosmic',  glow: 'shadow-glow-purple' },
+              { id: 'neuro',          icon: Brain,        label: 'Neuro & QI',       grad: 'bg-gradient-vibe',    glow: 'shadow-glow-purple' },
             ].map(item => {
               const isActive = activeTab === item.id;
               return (
@@ -2459,6 +2485,7 @@ export const AdminDashboard: React.FC = () => {
                   {activeTab === 'essays' && '✍️ Redação'}
                   {activeTab === 'attendance' && '📍 Frequência por Geolocalização'}
                   {activeTab === 'reports' && '📊 Análise de Progresso'}
+                  {activeTab === 'neuro' && '🧠 Avaliação Cognitiva'}
                 </span>
               </h2>
               <div className="text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] tracking-[0.25em] mt-2 flex items-center gap-2">
@@ -4220,6 +4247,116 @@ export const AdminDashboard: React.FC = () => {
                     </div>
                   )}
                 </div>
+              </div>
+            );
+          })()}
+
+          {activeTab === 'neuro' && (() => {
+            const DOMAIN_LABELS: Record<string, string> = {
+              matrizes: '🧩 Matrizes', series: '🔢 Séries', rotacao: '🔄 Rotação',
+              analogias: '💬 Analogias', memoria: '🧠 Memória', velocidade: '⚡ Velocidade',
+            };
+            const LEVEL_BADGE = ['bg-emerald-500', 'bg-sky-500', 'bg-amber-500', 'bg-rose-500'];
+            const GIFT_BADGE = ['bg-slate-400', 'bg-sky-500', 'bg-violet-500', 'bg-gradient-vibe'];
+            const filtered = neuroResults.filter(r => {
+              const t = searchTerm.trim().toLowerCase();
+              if (!t) return true;
+              return (r.student_name || '').toLowerCase().includes(t) || (r.anon_code || '').toLowerCase().includes(t);
+            });
+            return (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="bg-white dark:bg-slate-900 rounded-[32px] border dark:border-slate-800 p-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                      Triagem de perfil cognitivo (CHC), superdotação (Renzulli) e neurodivergência em graus.
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Link para os alunos: <span className="font-mono font-bold text-vibe-cyan">{window.location.origin}{window.location.pathname}#/avaliacao-cognitiva</span>
+                      {' '}· Resultados são indicadores de triagem — encaminhamento formal exige psicólogo.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="text"
+                      placeholder="Buscar nome ou código anônimo..."
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                      className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 px-4 py-2.5 rounded-2xl text-sm font-bold outline-none w-60"
+                    />
+                    <span className="text-xs font-black text-slate-400">{filtered.length} resultado(s)</span>
+                  </div>
+                </div>
+
+                {neuroLoading && (
+                  <div className="text-center py-16"><Loader2 size={32} className="animate-spin mx-auto text-violet-500" /></div>
+                )}
+                {!neuroLoading && filtered.length === 0 && (
+                  <div className="bg-white dark:bg-slate-900 rounded-[32px] border dark:border-slate-800 p-12 text-center text-slate-400">
+                    <Brain size={40} className="mx-auto mb-3 opacity-40" />
+                    <p className="font-bold">Nenhuma avaliação registrada ainda.</p>
+                    <p className="text-xs mt-1">Compartilhe o link da avaliação com as turmas.</p>
+                  </div>
+                )}
+
+                {filtered.map(r => (
+                  <div key={r.id} className="bg-white dark:bg-slate-900 rounded-[32px] border dark:border-slate-800 p-6 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+                      <div>
+                        <div className="font-black text-lg">
+                          {r.is_anonymous
+                            ? <span className="font-mono text-vibe-cyan">🕶️ {r.anon_code || 'Anônimo'}</span>
+                            : <>{r.student_name || 'Sem nome'} {r.grade && <span className="text-xs text-slate-400 font-bold">· {r.grade}ª {r.school_class}</span>}</>}
+                        </div>
+                        <div className="text-xs text-slate-400 font-bold mt-0.5">
+                          {new Date(r.created_at).toLocaleString('pt-BR')} · {r.age ? `${r.age} anos` : 'idade n/i'} · {Math.round((r.duration_seconds || 0) / 60)} min
+                          {r.integrity?.validity && r.integrity.validity !== 'ok' && (
+                            <span className={`ml-2 px-2 py-0.5 rounded-full text-white text-[10px] font-black uppercase ${r.integrity.validity === 'comprometida' ? 'bg-rose-500' : 'bg-amber-500'}`}>
+                              ⚠ validade {r.integrity.validity}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-center">
+                          <div className="text-3xl font-black text-gradient-vibe">{r.icg}</div>
+                          <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{r.classification}</div>
+                        </div>
+                        <button onClick={() => handleDeleteNeuroResult(r.id)}
+                          className="p-2 rounded-xl text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
+                      {(r.domain_scores || []).map((d: any) => (
+                        <div key={d.key} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-center">
+                          <div className="text-[10px] font-black text-slate-400 uppercase">{DOMAIN_LABELS[d.key] || d.key}</div>
+                          <div className="font-black tabular-nums">{d.index}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {r.giftedness && (
+                        <span className={`px-3 py-1.5 rounded-full text-white text-[10px] font-black uppercase tracking-wide ${GIFT_BADGE[r.giftedness.level] || 'bg-slate-400'}`}>
+                          🌟 Superdotação: {r.giftedness.levelLabel}
+                        </span>
+                      )}
+                      {(r.screenings || []).map((s: any) => (
+                        <span key={s.key} className={`px-3 py-1.5 rounded-full text-white text-[10px] font-black uppercase tracking-wide ${LEVEL_BADGE[s.level] || 'bg-slate-400'}`}>
+                          {s.emoji} {s.key}: {s.levelLabel}
+                        </span>
+                      ))}
+                    </div>
+                    {(r.screenings || []).some((s: any) => s.level >= 2) && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 font-bold mt-3">
+                        <AlertTriangle size={12} className="inline -mt-0.5 mr-1" />
+                        Indicadores moderados/expressivos — considerar conversa com a família e encaminhamento para avaliação profissional.
+                      </p>
+                    )}
+                  </div>
+                ))}
               </div>
             );
           })()}
